@@ -48,9 +48,14 @@ async function runProviderStartTest(options: {
   writeFileSync(
     fakeCommand,
     [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      'printf "%s|%s" "$PWD" "$*" > "$WORKSPACE_LOG"',
+      "#!/usr/bin/env python3",
+      "import json",
+      "import os",
+      "import pathlib",
+      "import sys",
+      'pathlib.Path(os.environ["WORKSPACE_LOG"]).write_text(',
+      '    json.dumps({"cwd": os.getcwd(), "argv": sys.argv[1:]})',
+      ")",
     ].join("\n"),
   );
   chmodSync(fakeCommand, 0o755);
@@ -95,9 +100,15 @@ async function runProviderStartTest(options: {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  assert.equal(
-    readFileSync(logPath, "utf8"),
-    `${workspacePath}|${options.provider === "opencode" ? "run" : "-p"} ${options.summary}`,
+  const invocation = JSON.parse(readFileSync(logPath, "utf8")) as {
+    argv: string[];
+    cwd: string;
+  };
+
+  assert.equal(invocation.cwd, workspacePath);
+  assert.deepEqual(
+    invocation.argv,
+    options.provider === "opencode" ? ["run", options.summary] : ["-p", options.summary],
   );
 
   const registry = new DelegationRegistry(dbPath);

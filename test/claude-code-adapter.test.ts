@@ -31,9 +31,14 @@ test("ClaudeCodeAdapter launches the command inside the workspace", async () => 
   writeFileSync(
     scriptPath,
     [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      'printf "%s|%s" "$PWD" "$*" > "$WORKSPACE_LOG"',
+      "#!/usr/bin/env python3",
+      "import json",
+      "import os",
+      "import pathlib",
+      "import sys",
+      'pathlib.Path(os.environ["WORKSPACE_LOG"]).write_text(',
+      '    json.dumps({"cwd": os.getcwd(), "argv": sys.argv[1:]})',
+      ")",
     ].join("\n"),
   );
   chmodSync(scriptPath, 0o755);
@@ -52,6 +57,7 @@ test("ClaudeCodeAdapter launches the command inside the workspace", async () => 
 
   assert.equal(launch.provider, "claude-code");
   assert.equal(launch.command, scriptPath);
+  assert.deepEqual(launch.args, ["-p", "test delegation"]);
   assert.ok(launch.pid > 0);
 
   const deadline = Date.now() + 2000;
@@ -59,5 +65,11 @@ test("ClaudeCodeAdapter launches the command inside the workspace", async () => 
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  assert.equal(readFileSync(logPath, "utf8"), `${workspace}|-p test delegation`);
+  const invocation = JSON.parse(readFileSync(logPath, "utf8")) as {
+    argv: string[];
+    cwd: string;
+  };
+
+  assert.equal(invocation.cwd, workspace);
+  assert.deepEqual(invocation.argv, ["-p", "test delegation"]);
 });
