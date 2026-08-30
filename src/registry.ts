@@ -548,6 +548,20 @@ export class DelegationRegistry {
     metadataJson: string;
     events: DelegationEvent[];
   }): DelegationFinalResult | null {
+    const terminalStatuses = new Set([
+      "failed",
+      "completed",
+      "cancelled",
+      "canceled",
+      "done",
+      "finished",
+      "stopped",
+    ]);
+
+    if (!terminalStatuses.has(input.status.toLowerCase())) {
+      return null;
+    }
+
     for (let index = input.events.length - 1; index >= 0; index -= 1) {
       const event = input.events[index];
       if (event?.eventType !== "result") {

@@ -203,6 +203,48 @@ test("stop records stopped even when no provider pid is tracked and is idempoten
   registry.close();
 });
 
+test("resume restarts a stopped delegation in the same workspace and clears the old result while running", async () => {
+  const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
+  const registry = new DelegationRegistry(registryPath);
+  const adapter = new RecordingAdapter("opencode", "fake-opencode");
+  const service = new DelegationService(
+    registry,
+    new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
+    { adapters: [adapter] },
+  );
+
+  const created = service.createDelegation({
+    summary: "resume me",
+    provider: "opencode",
+  });
+
+  const markerPath = path.join(created.workspaceReference, "resume-marker.txt");
+  writeFileSync(markerPath, "keep me\n");
+
+  const stopped = await service.stopDelegation(created.delegationId);
+  assert.equal(stopped.record.status, "stopped");
+
+  const resumed = await service.resumeDelegation(created.delegationId);
+  assert.equal(resumed.record.status, "running");
+  assert.equal(adapter.lastContext?.workspaceReference, created.workspaceReference);
+  assert.equal(adapter.lastContext?.delegationId, created.delegationId);
+  assert.equal(existsSync(markerPath), true);
+
+  const shown = registry.show(created.delegationId);
+  if (shown === null) {
+    throw new Error("expected delegation to exist after resume");
+  }
+
+  assert.equal(shown.status, "running");
+  assert.equal(shown.result, null);
+  assert.deepEqual(
+    shown.events.map((event) => event.eventType),
+    ["created", "stopped", "result", "resumed", "preparing", "running"],
+  );
+
+  registry.close();
+});
+
 test("attach dispatches to a provider that supports live sessions", async () => {
   const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
   const registry = new DelegationRegistry(registryPath);
