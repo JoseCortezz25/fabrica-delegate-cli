@@ -47,9 +47,16 @@ async function runProviderStartTest(options: {
 
   writeFileSync(
     fakeCommand,
-    ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$WORKSPACE_LOG"'].join(
-      "\n",
-    ),
+    [
+      "#!/usr/bin/env python3",
+      "import json",
+      "import os",
+      "import pathlib",
+      "import sys",
+      'pathlib.Path(os.environ["WORKSPACE_LOG"]).write_text(',
+      '    json.dumps({"cwd": os.getcwd(), "argv": sys.argv[1:]})',
+      ")",
+    ].join("\n"),
   );
   chmodSync(fakeCommand, 0o755);
 
@@ -83,13 +90,28 @@ async function runProviderStartTest(options: {
   assert.match(startOutput, /status: running/);
   assert.ok(startOutput.includes(`provider: ${options.provider}`), startOutput);
   assert.match(startOutput, /pid: \d+/);
+  assert.match(
+    startOutput,
+    new RegExp(
+      `command: .*${options.summary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    ),
+  );
 
   const deadline = Date.now() + 2000;
   while (!existsSync(logPath) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  assert.equal(readFileSync(logPath, "utf8"), workspacePath);
+  const invocation = JSON.parse(readFileSync(logPath, "utf8")) as {
+    argv: string[];
+    cwd: string;
+  };
+
+  assert.equal(invocation.cwd, workspacePath);
+  assert.deepEqual(
+    invocation.argv,
+    options.provider === "opencode" ? ["run", options.summary] : ["-p", options.summary],
+  );
 
   const registry = new DelegationRegistry(dbPath);
   const record = registry.show(delegationId);
