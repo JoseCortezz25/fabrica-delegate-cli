@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { type CreateDelegationRequest, DelegationService } from "./delegation-service.js";
 import { DelegationRegistry } from "./registry.js";
+import { watchDelegation } from "./watch.js";
 import { WorkspaceManager } from "./workspace-manager.js";
 
 const VERSION = "0.1.0";
@@ -12,6 +13,12 @@ interface CreateOptions {
   provider?: string;
   summary?: string;
   metadata?: string;
+}
+
+interface WatchOptions {
+  headless?: boolean;
+  visible?: boolean;
+  pollInterval?: string;
 }
 
 function parseMetadata(metadata?: string): Record<string, unknown> | undefined {
@@ -262,6 +269,43 @@ export function buildCli(): Command {
       const registry = openRegistry(program.opts<{ db?: string }>().db);
       try {
         printResult(registry, delegationId);
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
+    .command("watch")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Watch a delegation's live state from the persisted event stream.")
+    .option("--headless", "print only important transitions and errors")
+    .option("--visible", "render the live TUI")
+    .option("--poll-interval <ms>", "poll interval in milliseconds", "250")
+    .action(async (delegationId: string, options: WatchOptions) => {
+      const { db } = program.opts<{ db?: string }>();
+      const registry = openRegistry(db);
+
+      try {
+        const pollIntervalMs = Number.parseInt(options.pollInterval ?? "250", 10);
+        if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+          throw new Error("--poll-interval must be a positive integer");
+        }
+
+        if (options.visible === true) {
+          await watchDelegation(registry, delegationId, {
+            visible: true,
+            pollIntervalMs,
+          });
+        } else if (options.headless === true) {
+          await watchDelegation(registry, delegationId, {
+            headless: true,
+            pollIntervalMs,
+          });
+        } else {
+          await watchDelegation(registry, delegationId, {
+            pollIntervalMs,
+          });
+        }
       } finally {
         registry.close();
       }
