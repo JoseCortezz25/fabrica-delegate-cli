@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { DelegationService } from "./delegation-service.js";
+import { type CreateDelegationRequest, DelegationService } from "./delegation-service.js";
 import { DelegationRegistry } from "./registry.js";
 import { WorkspaceManager } from "./workspace-manager.js";
 
@@ -36,13 +36,10 @@ function openService(
   workspaceRoot?: string,
 ): { registry: DelegationRegistry; service: DelegationService } {
   const registry = openRegistry(dbPath);
-  let workspaceManager: WorkspaceManager;
-
-  if (workspaceRoot === undefined) {
-    workspaceManager = new WorkspaceManager();
-  } else {
-    workspaceManager = new WorkspaceManager({ workspacesRoot: workspaceRoot });
-  }
+  const workspaceManager =
+    workspaceRoot === undefined
+      ? new WorkspaceManager()
+      : new WorkspaceManager({ workspacesRoot: workspaceRoot });
 
   return {
     registry,
@@ -116,7 +113,7 @@ export function buildCli(): Command {
     .option("--identity <identity>", "delegation identity", "factory-agent")
     .option("--status <status>", "delegation status", "queued")
     .option("--scope <scope>", "delegation scope", "repository")
-    .option("--provider <provider>", "provider name", "github")
+    .option("--provider <provider>", "provider name", "opencode")
     .option(
       "--summary <summary>",
       "summary metadata",
@@ -128,7 +125,7 @@ export function buildCli(): Command {
       const { registry, service } = openService(db, workspaceRoot);
 
       try {
-        const request: CreateDelegationServiceRequest = {};
+        const request: CreateDelegationRequest = {};
 
         if (options.identity !== undefined) {
           request.identity = options.identity;
@@ -164,16 +161,19 @@ export function buildCli(): Command {
   program
     .command("start")
     .argument("<delegation-id>", "delegation identifier")
-    .description("Start a delegation and ensure its workspace exists.")
-    .action((delegationId: string) => {
+    .description("Start a delegation and launch its provider inside the workspace.")
+    .action(async (delegationId: string) => {
       const { db, workspaceRoot } = program.opts<{ db?: string; workspaceRoot?: string }>();
       const { registry, service } = openService(db, workspaceRoot);
 
       try {
-        const started = service.startDelegation(delegationId);
-        console.log(`Started delegation ${started.delegationId}`);
-        console.log(`  workspace: ${started.workspaceReference}`);
-        console.log(`  status: ${started.status}`);
+        const started = await service.startDelegation(delegationId);
+        console.log(`Started delegation ${started.record.delegationId}`);
+        console.log(`  provider: ${started.record.provider}`);
+        console.log(`  workspace: ${started.record.workspaceReference}`);
+        console.log(`  status: ${started.record.status}`);
+        console.log(`  pid: ${started.launch.pid}`);
+        console.log(`  command: ${started.launch.command} ${started.launch.args.join(" ")}`.trim());
       } finally {
         registry.close();
       }
@@ -210,13 +210,4 @@ export function buildCli(): Command {
 export async function main(argv: string[] = process.argv): Promise<void> {
   const program = buildCli();
   await program.parseAsync(argv);
-}
-
-interface CreateDelegationServiceRequest {
-  identity?: string;
-  status?: string;
-  scope?: string;
-  provider?: string;
-  summary?: string;
-  metadata?: Record<string, unknown>;
 }
