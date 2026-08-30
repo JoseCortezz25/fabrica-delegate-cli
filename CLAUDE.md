@@ -65,6 +65,12 @@ If the request is ambiguous, ask one precise question and wait.
 6. Open or update the PR with a clear summary.
 7. Update the issue state and leave a concise status note.
 
+### End-user validation
+
+- Before marking work complete, validate it as a normal end user would by running the real CLI flows end-to-end: `create` → `start` → `watch` → `result`.
+- Confirm the observable behavior matches expectations; do not rely only on unit tests, mocks, or code inspection.
+- Do not mark work complete until that end-user validation has passed.
+
 ## Documentation map
 
 - `knowledge/` — architecture notes, issue context, and task-specific findings
