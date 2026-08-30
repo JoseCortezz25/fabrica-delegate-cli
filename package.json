@@ -10,8 +10,9 @@
   },
   "scripts": {
     "build": "~/.bun/bin/bun run typecheck && ~/.bun/bin/bun run lint && ~/.bun/bin/bun build --compile --outfile dist/fabrica-delegate src/index.ts",
-    "lint": "~/.bun/bin/bun x biome check src",
+    "lint": "~/.bun/bin/bun x biome check src test",
     "typecheck": "~/.bun/bin/bun x tsc --noEmit",
+    "test": "~/.bun/bin/bun test",
     "start": "~/.bun/bin/bun run src/index.ts"
   },
   "dependencies": {
