@@ -30,9 +30,11 @@ test("ClaudeCodeAdapter launches the command inside the workspace", async () => 
 
   writeFileSync(
     scriptPath,
-    ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$WORKSPACE_LOG"'].join(
-      "\n",
-    ),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'printf "%s|%s" "$PWD" "$*" > "$WORKSPACE_LOG"',
+    ].join("\n"),
   );
   chmodSync(scriptPath, 0o755);
 
@@ -57,5 +59,5 @@ test("ClaudeCodeAdapter launches the command inside the workspace", async () => 
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  assert.equal(readFileSync(logPath, "utf8"), workspace);
+  assert.equal(readFileSync(logPath, "utf8"), `${workspace}|-p test delegation`);
 });
