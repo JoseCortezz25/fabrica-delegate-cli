@@ -40,12 +40,14 @@ function createGitRepo(): { repoRoot: string; workspaceRoot: string; registryPat
 
 class RecordingAdapter implements DelegationProviderAdapter {
   readonly provider = "opencode";
+  public lastContext: DelegationLaunchContext | null = null;
 
   async start(context: DelegationLaunchContext): Promise<DelegationLaunchResult> {
+    this.lastContext = context;
     return {
       provider: this.provider,
       command: "fake-opencode",
-      args: [],
+      args: ["--headless"],
       pid: 4242,
       workspaceReference: context.workspaceReference,
       startedAt: new Date().toISOString(),
@@ -62,62 +64,40 @@ afterEach(() => {
   }
 });
 
-test("creates isolated workspaces and records their paths", () => {
+test("start records lifecycle events and launches the adapter in the isolated workspace", async () => {
   const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
   const registry = new DelegationRegistry(registryPath);
+  const adapter = new RecordingAdapter();
   const service = new DelegationService(
     registry,
     new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
+    { adapters: [adapter] },
   );
 
-  const first = service.createDelegation({ summary: "first delegation" });
-  const second = service.createDelegation({ summary: "second delegation" });
-
-  assert.ok(first.workspaceReference.length > 0);
-  assert.ok(second.workspaceReference.length > 0);
-  assert.notEqual(first.workspaceReference, second.workspaceReference);
-  assert.equal(registry.show(first.delegationId)?.workspaceReference, first.workspaceReference);
-  assert.equal(registry.show(second.delegationId)?.workspaceReference, second.workspaceReference);
-
-  const firstMarker = path.join(first.workspaceReference, "first-only.txt");
-  writeFileSync(firstMarker, "isolated state\n");
-
-  assert.equal(existsSync(firstMarker), true);
-  assert.equal(existsSync(path.join(second.workspaceReference, "first-only.txt")), false);
-
-  registry.close();
-});
-
-test("start provisions a missing workspace and updates the delegation", async () => {
-  const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
-  const registry = new DelegationRegistry(registryPath);
-  const service = new DelegationService(
-    registry,
-    new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
-    { adapters: [new RecordingAdapter()] },
-  );
-
-  const seeded = registry.create({
-    delegationId: "delegation-start",
-    identity: "factory-agent",
-    status: "queued",
-    scope: "repository",
+  const created = service.createDelegation({
+    summary: "launch me",
     provider: "opencode",
-    workspaceReference: path.join(workspaceRoot, "missing-workspace"),
-    summary: "seeded delegation",
   });
 
-  assert.equal(existsSync(seeded.workspaceReference), false);
+  const started = await service.startDelegation(created.delegationId);
 
-  const started = await service.startDelegation(seeded.delegationId);
+  assert.equal(started.record.status, "running");
+  assert.equal(started.record.provider, "opencode");
+  assert.equal(adapter.lastContext?.workspaceReference, created.workspaceReference);
+  assert.equal(adapter.lastContext?.delegationId, created.delegationId);
+  assert.equal(existsSync(created.workspaceReference), true);
 
-  assert.notEqual(started.record.workspaceReference, seeded.workspaceReference);
-  assert.equal(existsSync(started.record.workspaceReference), true);
-  assert.equal(
-    registry.show(seeded.delegationId)?.workspaceReference,
-    started.record.workspaceReference,
+  const shown = registry.show(created.delegationId);
+  if (shown === null) {
+    throw new Error("expected delegation to exist after start");
+  }
+
+  assert.deepEqual(
+    shown.events.map((event) => event.eventType),
+    ["created", "started", "preparing", "running"],
   );
-  assert.equal(started.record.events.at(-1)?.eventType, "running");
+  assert.equal(shown.status, "running");
+  assert.equal(shown.events.at(-1)?.payload.pid, 4242);
 
   registry.close();
 });

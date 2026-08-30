@@ -55,10 +55,6 @@ export interface DelegationSummary {
   lastEventAt: string | null;
 }
 
-export interface RegistryOptions {
-  dbPath?: string;
-}
-
 interface DelegationRow {
   delegation_id: string;
   identity: string;
@@ -237,6 +233,43 @@ export class DelegationRegistry {
       );
 
       this.database.exec("COMMIT");
+      const updated = this.show(delegationId);
+      if (updated === null) {
+        throw new Error("delegation was updated but could not be read back");
+      }
+
+      return updated;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recordLifecycleEvent(
+    delegationId: string,
+    status: string,
+    eventType: string,
+    payload: DelegationMetadata,
+  ): DelegationRecord {
+    const createdAt = nowIso();
+
+    this.database.exec("BEGIN");
+    try {
+      const result = this.database
+        .query(
+          `UPDATE delegations
+           SET status = ?, updated_at = ?
+           WHERE delegation_id = ?;`,
+        )
+        .run(status, createdAt, delegationId);
+
+      if (result.changes === 0) {
+        throw new Error(`Delegation not found: ${delegationId}`);
+      }
+
+      this.recordEvent(delegationId, eventType, payload, createdAt);
+      this.database.exec("COMMIT");
+
       const updated = this.show(delegationId);
       if (updated === null) {
         throw new Error("delegation was updated but could not be read back");
