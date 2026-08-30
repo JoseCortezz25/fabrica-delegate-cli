@@ -118,6 +118,8 @@ export class DelegationRegistry {
   private initialize(): void {
     this.database.exec(`
       PRAGMA foreign_keys = ON;
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 2000;
       CREATE TABLE IF NOT EXISTS delegations (
         delegation_id TEXT PRIMARY KEY,
         identity TEXT NOT NULL,
