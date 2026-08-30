@@ -230,7 +230,9 @@ function VisibleWatchApp(props: {
   return createElement(
     Box,
     { flexDirection: "column" },
-    ...lines.map((line, index) => createElement(Text, { key: `${index}-${line}` }, line)),
+    ...lines.map((line: string, index: number) =>
+      createElement(Text, { key: `${index}-${line}` }, line),
+    ),
   );
 }
 

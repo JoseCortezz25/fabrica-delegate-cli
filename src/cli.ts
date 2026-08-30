@@ -93,12 +93,42 @@ function printShow(registry: DelegationRegistry, delegationId: string): void {
   console.log(`  created_at: ${record.createdAt}`);
   console.log(`  updated_at: ${record.updatedAt}`);
   console.log(`  metadata: ${JSON.stringify(record.metadata, null, 2)}`);
+  if (record.result !== null) {
+    console.log("  result:");
+    console.log(`    exit_code: ${record.result.exitCode}`);
+    console.log(`    status: ${record.result.status}`);
+    console.log(`    summary: ${record.result.summary}`);
+    console.log(`    recorded_at: ${record.result.recordedAt}`);
+    console.log(`    artifacts: ${JSON.stringify(record.result.artifacts, null, 2)}`);
+  }
   console.log("  events:");
   for (const event of record.events) {
     console.log(
       `    - [${event.createdAt}] ${event.eventType} #${event.eventId}: ${JSON.stringify(event.payload)}`,
     );
   }
+}
+
+function printResult(registry: DelegationRegistry, delegationId: string): void {
+  const record = registry.show(delegationId);
+
+  if (record === null) {
+    throw new Error(`Delegation not found: ${delegationId}`);
+  }
+
+  if (record.result === null) {
+    throw new Error(`No final result recorded for delegation ${delegationId}`);
+  }
+
+  const { result } = record;
+  console.log(`Delegation ${record.delegationId} final result`);
+  console.log(`  status: ${result.status}`);
+  console.log(`  exit_code: ${result.exitCode}`);
+  console.log(`  summary: ${result.summary}`);
+  console.log(`  workspace: ${result.workspaceReference}`);
+  console.log(`  recorded_at: ${result.recordedAt}`);
+  console.log(`  metadata: ${JSON.stringify(result.metadata, null, 2)}`);
+  console.log(`  artifacts: ${JSON.stringify(result.artifacts, null, 2)}`);
 }
 
 export function buildCli(): Command {
@@ -187,6 +217,26 @@ export function buildCli(): Command {
     });
 
   program
+    .command("stop")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Stop a running delegation and persist the stopped state.")
+    .action(async (delegationId: string) => {
+      const { db } = program.opts<{ db?: string }>();
+      const { registry, service } = openService(db);
+
+      try {
+        const stopped = await service.stopDelegation(delegationId);
+        console.log(`Stopped delegation ${stopped.record.delegationId}`);
+        console.log(`  status: ${stopped.record.status}`);
+        if (stopped.pid !== null) {
+          console.log(`  pid: ${stopped.pid}`);
+        }
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
     .command("list")
     .description("List delegations stored in SQLite.")
     .action(() => {
@@ -206,6 +256,19 @@ export function buildCli(): Command {
       const registry = openRegistry(program.opts<{ db?: string }>().db);
       try {
         printShow(registry, delegationId);
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
+    .command("result")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Show the final result for a delegation.")
+    .action((delegationId: string) => {
+      const registry = openRegistry(program.opts<{ db?: string }>().db);
+      try {
+        printResult(registry, delegationId);
       } finally {
         registry.close();
       }

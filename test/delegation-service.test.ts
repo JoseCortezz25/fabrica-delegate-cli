@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
@@ -55,6 +55,47 @@ class RecordingAdapter implements DelegationProviderAdapter {
   }
 }
 
+class LiveProcessAdapter implements DelegationProviderAdapter {
+  readonly provider = "opencode";
+
+  constructor(
+    private readonly command: string,
+    private readonly env: Record<string, string>,
+  ) {}
+
+  async start(context: DelegationLaunchContext): Promise<DelegationLaunchResult> {
+    return await new Promise<DelegationLaunchResult>((resolve, reject) => {
+      const child = spawn(this.command, [], {
+        cwd: context.workspaceReference,
+        detached: true,
+        env: {
+          ...process.env,
+          ...this.env,
+        },
+        stdio: "ignore",
+      });
+
+      child.once("error", reject);
+      child.once("spawn", () => {
+        if (child.pid == null) {
+          reject(new Error("expected provider process pid"));
+          return;
+        }
+
+        child.unref();
+        resolve({
+          provider: this.provider,
+          command: this.command,
+          args: [],
+          pid: child.pid,
+          workspaceReference: context.workspaceReference,
+          startedAt: new Date().toISOString(),
+        });
+      });
+    });
+  }
+}
+
 afterEach(() => {
   while (tempRoots.length > 0) {
     const root = tempRoots.pop();
@@ -98,6 +139,132 @@ test("start records lifecycle events and launches the adapter in the isolated wo
   );
   assert.equal(shown.status, "running");
   assert.equal(shown.events.at(-1)?.payload.pid, 4242);
+
+  registry.close();
+});
+
+test("stop records stopped even when no provider pid is tracked and is idempotent", async () => {
+  const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
+  const registry = new DelegationRegistry(registryPath);
+  const service = new DelegationService(
+    registry,
+    new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
+    { adapters: [new RecordingAdapter()] },
+  );
+
+  const created = service.createDelegation({
+    summary: "stop me without a running process",
+    provider: "opencode",
+  });
+
+  const stopped = await service.stopDelegation(created.delegationId);
+  assert.equal(stopped.record.status, "stopped");
+  assert.equal(stopped.pid, null);
+
+  const stoppedAgain = await service.stopDelegation(created.delegationId);
+  assert.equal(stoppedAgain.record.status, "stopped");
+  assert.equal(stoppedAgain.pid, null);
+  assert.deepEqual(
+    stoppedAgain.record.events.map((event) => event.eventType),
+    ["created", "stopped", "result"],
+  );
+
+  const shown = registry.show(created.delegationId);
+  if (shown === null) {
+    throw new Error("expected delegation to exist after stop");
+  }
+
+  assert.equal(shown.status, "stopped");
+  assert.deepEqual(
+    shown.events.map((event) => event.eventType),
+    ["created", "stopped", "result"],
+  );
+
+  registry.close();
+});
+
+test("stop terminates the provider process and persists the stopped state", async () => {
+  const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
+  const registry = new DelegationRegistry(registryPath);
+  const binDir = mkdtempSync(path.join(os.tmpdir(), "fabrica-stop-bin-"));
+  tempRoots.push(binDir);
+  const stopLogPath = path.join(binDir, "stopped.txt");
+  const providerScript = path.join(binDir, "opencode");
+
+  writeFileSync(
+    providerScript,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `trap 'printf stopped > "$STOP_LOG"' TERM`,
+      `printf started > "$START_LOG"`,
+      "while true; do sleep 1; done",
+    ].join("\n"),
+  );
+  chmodSync(providerScript, 0o755);
+
+  const service = new DelegationService(
+    registry,
+    new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
+    {
+      adapters: [
+        new LiveProcessAdapter(providerScript, {
+          START_LOG: path.join(binDir, "started.txt"),
+          STOP_LOG: stopLogPath,
+        }),
+      ],
+    },
+  );
+
+  const created = service.createDelegation({
+    summary: "stop me",
+    provider: "opencode",
+  });
+
+  const started = await service.startDelegation(created.delegationId);
+  assert.equal(started.record.status, "running");
+
+  const stopped = await service.stopDelegation(created.delegationId);
+  assert.equal(stopped.record.status, "stopped");
+  assert.equal(stopped.pid, started.launch.pid);
+
+  const deadline = Date.now() + 2000;
+  let exited = false;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(started.launch.pid, 0);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as NodeJS.ErrnoException).code === "ESRCH"
+      ) {
+        exited = true;
+        break;
+      }
+
+      throw error;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  assert.equal(exited, true);
+
+  const shown = registry.show(created.delegationId);
+  if (shown === null) {
+    throw new Error("expected delegation to exist after stop");
+  }
+
+  assert.equal(shown.status, "stopped");
+  assert.deepEqual(
+    shown.events.map((event) => event.eventType),
+    ["created", "started", "preparing", "running", "stopped", "result"],
+  );
+  assert.equal(shown.status, "stopped");
+  assert.equal(shown.result?.exitCode, 143);
+  assert.equal(shown.result?.summary, "stop me");
+  assert.equal(shown.result?.artifacts.length, 0);
 
   registry.close();
 });

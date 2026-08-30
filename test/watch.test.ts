@@ -59,6 +59,7 @@ test("headless and visible formatters summarize the live delegation state", () =
       metadata: {},
       createdAt: "2026-08-30T00:00:00.000Z",
       updatedAt: "2026-08-30T00:00:01.000Z",
+      result: null,
       events: [
         {
           eventId: 1,
