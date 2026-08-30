@@ -180,6 +180,26 @@ export function buildCli(): Command {
     });
 
   program
+    .command("stop")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Stop a running delegation and persist the stopped state.")
+    .action(async (delegationId: string) => {
+      const { db } = program.opts<{ db?: string }>();
+      const { registry, service } = openService(db);
+
+      try {
+        const stopped = await service.stopDelegation(delegationId);
+        console.log(`Stopped delegation ${stopped.record.delegationId}`);
+        console.log(`  status: ${stopped.record.status}`);
+        if (stopped.pid !== null) {
+          console.log(`  pid: ${stopped.pid}`);
+        }
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
     .command("list")
     .description("List delegations stored in SQLite.")
     .action(() => {

@@ -19,6 +19,11 @@ export interface StartDelegationResult {
   launch: DelegationLaunchResult;
 }
 
+export interface StopDelegationResult {
+  record: DelegationRecord;
+  pid: number | null;
+}
+
 export interface DelegationServiceOptions {
   adapters?: Iterable<DelegationProviderAdapter>;
 }
@@ -32,6 +37,50 @@ function adapterMap(
   }
 
   return map;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isNoSuchProcess(error: unknown): boolean {
+  return (
+    error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH"
+  );
+}
+
+function findLaunchPid(record: DelegationRecord): number | null {
+  for (let index = record.events.length - 1; index >= 0; index -= 1) {
+    const payload = record.events[index]?.payload;
+    const pid = payload?.pid;
+    if (typeof pid === "number" && Number.isFinite(pid)) {
+      return pid;
+    }
+  }
+
+  return null;
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (isNoSuchProcess(error)) {
+        return true;
+      }
+
+      throw error;
+    }
+
+    await sleep(50);
+  }
+
+  return false;
 }
 
 export class DelegationService {
@@ -135,6 +184,73 @@ export class DelegationService {
       this.registry.recordLifecycleEvent(delegationId, "failed", "failed", {
         ...lifecycleContext,
         previousStatus: preparing.status,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  async stopDelegation(delegationId: string): Promise<StopDelegationResult> {
+    const record = this.registry.show(delegationId);
+
+    if (record === null) {
+      throw new Error(`Delegation not found: ${delegationId}`);
+    }
+
+    const pid = findLaunchPid(record);
+    if (record.status === "stopped") {
+      return { record, pid };
+    }
+
+    const stopContext = {
+      delegationId,
+      workspaceReference: record.workspaceReference,
+      summary: record.summary,
+      metadata: record.metadata,
+      pid,
+      previousStatus: record.status,
+    };
+
+    if (pid === null) {
+      const stopped = this.registry.recordLifecycleEvent(delegationId, "stopped", "stopped", {
+        ...stopContext,
+        signal: null,
+      });
+
+      return { record: stopped, pid: null };
+    }
+
+    try {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch (error) {
+        if (!isNoSuchProcess(error)) {
+          throw error;
+        }
+      }
+
+      const exited = await waitForProcessExit(pid);
+      if (!exited) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch (error) {
+          if (!isNoSuchProcess(error)) {
+            throw error;
+          }
+        }
+
+        await waitForProcessExit(pid);
+      }
+
+      const stopped = this.registry.recordLifecycleEvent(delegationId, "stopped", "stopped", {
+        ...stopContext,
+        signal: exited ? "SIGTERM" : "SIGKILL",
+      });
+
+      return { record: stopped, pid };
+    } catch (error) {
+      this.registry.recordLifecycleEvent(delegationId, "failed", "stop_failed", {
+        ...stopContext,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
