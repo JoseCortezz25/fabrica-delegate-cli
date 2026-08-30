@@ -92,9 +92,7 @@ async function runProviderStartTest(options: {
   assert.match(startOutput, /pid: \d+/);
   assert.match(
     startOutput,
-    new RegExp(
-      `command: .*${options.summary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-    ),
+    new RegExp(`command: .*${options.summary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
   );
 
   const deadline = Date.now() + 2000;

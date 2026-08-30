@@ -44,11 +44,17 @@ test("CLI fan-out starts the same task across multiple providers and prints a co
 
   writeFileSync(
     opencodeCommand,
-    ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$OPENCODE_LOG"'].join("\n"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'printf "%s|%s" "$PWD" "$*" > "$OPENCODE_LOG"',
+    ].join("\n"),
   );
   writeFileSync(
     claudeCommand,
-    ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$CLAUDE_LOG"'].join("\n"),
+    ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s|%s" "$PWD" "$*" > "$CLAUDE_LOG"'].join(
+      "\n",
+    ),
   );
   chmodSync(opencodeCommand, 0o755);
   chmodSync(claudeCommand, 0o755);
@@ -83,7 +89,8 @@ test("CLI fan-out starts the same task across multiple providers and prints a co
   assert.match(output, /delegation_id/);
   assert.match(output, /opencode/);
   assert.match(output, /claude-code/);
-  assert.match(output, /running/);
+  assert.match(output, /opencode.*run issue 12/);
+  assert.match(output, /claude-code.*-p issue 12/);
 
   const deadline = Date.now() + 2000;
   while ((!existsSync(opencodeLog) || !existsSync(claudeLog)) && Date.now() < deadline) {
@@ -104,10 +111,10 @@ test("CLI fan-out starts the same task across multiple providers and prints a co
   const recordsByProvider = new Map(records.map((record) => [record.provider, record] as const));
   assert.equal(
     readFileSync(opencodeLog, "utf8"),
-    recordsByProvider.get("opencode")?.workspaceReference,
+    `${recordsByProvider.get("opencode")?.workspaceReference}|run issue 12`,
   );
   assert.equal(
     readFileSync(claudeLog, "utf8"),
-    recordsByProvider.get("claude-code")?.workspaceReference,
+    `${recordsByProvider.get("claude-code")?.workspaceReference}|-p issue 12`,
   );
 });
