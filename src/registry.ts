@@ -8,6 +8,7 @@ export interface DelegationMetadata {
 }
 
 export interface CreateDelegationInput {
+  delegationId?: string;
   identity: string;
   status: string;
   scope: string;
@@ -147,7 +148,7 @@ export class DelegationRegistry {
   }
 
   create(input: CreateDelegationInput): DelegationRecord {
-    const delegationId = randomUUID();
+    const delegationId = input.delegationId ?? randomUUID();
     const createdAt = nowIso();
     const metadata = input.metadata ?? {};
     const serializedMetadata = JSON.stringify(metadata);
@@ -182,30 +183,21 @@ export class DelegationRegistry {
           createdAt,
         );
 
-      this.database
-        .query(
-          `INSERT INTO delegation_events (
-          delegation_id,
-          event_type,
-          payload_json,
-          created_at
-        ) VALUES (?, ?, ?, ?);`,
-        )
-        .run(
+      this.recordEvent(
+        delegationId,
+        "created",
+        {
           delegationId,
-          "created",
-          JSON.stringify({
-            delegationId,
-            identity: input.identity,
-            status: input.status,
-            scope: input.scope,
-            provider: input.provider,
-            workspaceReference: input.workspaceReference,
-            summary: input.summary,
-            metadata,
-          }),
-          createdAt,
-        );
+          identity: input.identity,
+          status: input.status,
+          scope: input.scope,
+          provider: input.provider,
+          workspaceReference: input.workspaceReference,
+          summary: input.summary,
+          metadata,
+        },
+        createdAt,
+      );
 
       this.database.exec("COMMIT");
       const created = this.show(delegationId);
@@ -214,6 +206,43 @@ export class DelegationRegistry {
       }
 
       return created;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  updateWorkspaceReference(delegationId: string, workspaceReference: string): DelegationRecord {
+    const updatedAt = nowIso();
+
+    this.database.exec("BEGIN");
+    try {
+      const result = this.database
+        .query(
+          `UPDATE delegations
+           SET workspace_reference = ?, updated_at = ?
+           WHERE delegation_id = ?;`,
+        )
+        .run(workspaceReference, updatedAt, delegationId);
+
+      if (result.changes === 0) {
+        throw new Error(`Delegation not found: ${delegationId}`);
+      }
+
+      this.recordEvent(
+        delegationId,
+        "workspace_updated",
+        { delegationId, workspaceReference },
+        updatedAt,
+      );
+
+      this.database.exec("COMMIT");
+      const updated = this.show(delegationId);
+      if (updated === null) {
+        throw new Error("delegation was updated but could not be read back");
+      }
+
+      return updated;
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;
@@ -310,6 +339,24 @@ export class DelegationRegistry {
 
   close(): void {
     this.database.close();
+  }
+
+  private recordEvent(
+    delegationId: string,
+    eventType: string,
+    payload: DelegationMetadata,
+    createdAt: string,
+  ): void {
+    this.database
+      .query(
+        `INSERT INTO delegation_events (
+          delegation_id,
+          event_type,
+          payload_json,
+          created_at
+        ) VALUES (?, ?, ?, ?);`,
+      )
+      .run(delegationId, eventType, JSON.stringify(payload), createdAt);
   }
 
   private listEvents(delegationId: string): DelegationEvent[] {
