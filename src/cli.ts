@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { type CreateDelegationRequest, DelegationService } from "./delegation-service.js";
 import { DelegationRegistry } from "./registry.js";
+import { printReplay } from "./replay.js";
 import { watchDelegation } from "./watch.js";
 import { WorkspaceManager } from "./workspace-manager.js";
 
@@ -315,6 +316,19 @@ export function buildCli(): Command {
       const registry = openRegistry(program.opts<{ db?: string }>().db);
       try {
         printResult(registry, delegationId);
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
+    .command("replay")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Reconstruct the persisted event stream for a delegation.")
+    .action((delegationId: string) => {
+      const registry = openRegistry(program.opts<{ db?: string }>().db);
+      try {
+        printReplay(registry, delegationId);
       } finally {
         registry.close();
       }
