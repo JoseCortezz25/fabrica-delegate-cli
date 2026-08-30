@@ -16,11 +16,14 @@
     "start": "~/.bun/bin/bun run src/index.ts"
   },
   "dependencies": {
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "ink": "^7.1.1",
+    "react": "^19.2.8"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.15.29",
+    "@types/react": "^19.2.18",
     "typescript": "^5.8.3"
   }
 }
