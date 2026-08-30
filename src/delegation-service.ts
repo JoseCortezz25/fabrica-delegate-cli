@@ -30,6 +30,23 @@ export interface ResumeDelegationResult {
   launch: DelegationLaunchResult;
 }
 
+export interface FanoutDelegationRequest extends CreateDelegationRequest {
+  providers: string[];
+}
+
+export interface FanoutDelegationEntry {
+  provider: string;
+  record: DelegationRecord;
+  launch: DelegationLaunchResult | null;
+  error: string | null;
+}
+
+export interface FanoutDelegationResult {
+  groupId: string;
+  summary: string;
+  entries: FanoutDelegationEntry[];
+}
+
 export interface AttachDelegationResult {
   record: DelegationRecord;
   pid: number | null;
@@ -55,6 +72,23 @@ function adapterMap(
   }
 
   return map;
+}
+
+function normalizeProviders(providers: Iterable<string>): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const provider of providers) {
+    const trimmed = provider.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -420,6 +454,83 @@ export class DelegationService {
       });
       throw error;
     }
+  }
+
+  async fanOutDelegations(input: FanoutDelegationRequest): Promise<FanoutDelegationResult> {
+    const providers = normalizeProviders(input.providers);
+
+    if (providers.length < 2) {
+      throw new Error("Fan-out requires at least two distinct providers");
+    }
+
+    const unknownProvider = providers.find((provider) => !this.providers.has(provider));
+    if (unknownProvider !== undefined) {
+      throw new Error(`No provider adapter registered for ${unknownProvider}`);
+    }
+
+    const groupId = randomUUID();
+    const summary = input.summary ?? "Delegation created via fabrica-delegate create.";
+    const baseMetadata = input.metadata ?? {};
+    const createdRecords = providers.map((provider, index) => {
+      const metadata = {
+        ...baseMetadata,
+        fanout: {
+          groupId,
+          provider,
+          providerIndex: index,
+          providerCount: providers.length,
+          providers,
+        },
+      };
+
+      return {
+        provider,
+        created: this.createDelegation({
+          identity: input.identity,
+          status: input.status,
+          scope: input.scope,
+          provider,
+          summary,
+          metadata,
+        }),
+      };
+    });
+
+    const settled = await Promise.allSettled(
+      createdRecords.map((entry) => this.startDelegation(entry.created.delegationId)),
+    );
+
+    const entries = createdRecords.map((entry, index) => {
+      const outcome = settled[index];
+
+      if (outcome?.status === "fulfilled") {
+        return {
+          provider: entry.provider,
+          record: outcome.value.record,
+          launch: outcome.value.launch,
+          error: null,
+        } satisfies FanoutDelegationEntry;
+      }
+
+      const record = this.registry.show(entry.created.delegationId) ?? entry.created;
+      return {
+        provider: entry.provider,
+        record,
+        launch: null,
+        error:
+          outcome?.status === "rejected"
+            ? outcome.reason instanceof Error
+              ? outcome.reason.message
+              : String(outcome.reason)
+            : "Unknown fan-out failure",
+      } satisfies FanoutDelegationEntry;
+    });
+
+    return {
+      groupId,
+      summary,
+      entries,
+    };
   }
 
   async attachDelegation(delegationId: string): Promise<AttachDelegationResult> {

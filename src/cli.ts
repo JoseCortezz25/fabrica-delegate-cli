@@ -1,5 +1,9 @@
 import { Command } from "commander";
-import { type CreateDelegationRequest, DelegationService } from "./delegation-service.js";
+import {
+  type CreateDelegationRequest,
+  DelegationService,
+  type FanoutDelegationRequest,
+} from "./delegation-service.js";
 import { DelegationRegistry } from "./registry.js";
 import { printReplay } from "./replay.js";
 import { watchDelegation } from "./watch.js";
@@ -12,6 +16,15 @@ interface CreateOptions {
   status?: string;
   scope?: string;
   provider?: string;
+  summary?: string;
+  metadata?: string;
+}
+
+interface FanoutOptions {
+  identity?: string;
+  status?: string;
+  scope?: string;
+  provider?: string[];
   summary?: string;
   metadata?: string;
 }
@@ -33,6 +46,46 @@ function parseMetadata(metadata?: string): Record<string, unknown> | undefined {
   }
 
   return parsed as Record<string, unknown>;
+}
+
+function collectProvider(value: string, previous: string[] = []): string[] {
+  previous.push(value);
+  return previous;
+}
+
+function parseProviderList(values: string[] | undefined): string[] {
+  const providers = (values ?? [])
+    .flatMap((value) => value.split(","))
+    .map((provider) => provider.trim())
+    .filter((provider) => provider.length > 0);
+  const uniqueProviders = [...new Set(providers)];
+
+  if (uniqueProviders.length < 2) {
+    throw new Error(
+      "--provider must be supplied at least twice, or with at least two comma-separated providers",
+    );
+  }
+
+  return uniqueProviders;
+}
+
+function printFanout(result: Awaited<ReturnType<DelegationService["fanOutDelegations"]>>): void {
+  console.log(`Fan-out group ${result.groupId}`);
+  console.log(`  summary: ${result.summary}`);
+  console.table(
+    result.entries.map((entry) => ({
+      provider: entry.provider,
+      delegation_id: entry.record.delegationId,
+      status: entry.record.status,
+      pid: entry.launch?.pid ?? null,
+      workspace: entry.record.workspaceReference,
+      command:
+        entry.launch === null
+          ? ""
+          : `${entry.launch.command} ${entry.launch.args.join(" ")}`.trim(),
+      error: entry.error ?? "",
+    })),
+  );
 }
 
 function openRegistry(dbPath?: string): DelegationRegistry {
@@ -212,6 +265,43 @@ export function buildCli(): Command {
         console.log(`  status: ${started.record.status}`);
         console.log(`  pid: ${started.launch.pid}`);
         console.log(`  command: ${started.launch.command} ${started.launch.args.join(" ")}`.trim());
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
+    .command("fanout")
+    .description(
+      "Launch the same task across multiple providers and compare the results side by side.",
+    )
+    .option("--identity <identity>", "delegation identity", "factory-agent")
+    .option("--status <status>", "delegation status", "queued")
+    .option("--scope <scope>", "delegation scope", "repository")
+    .option("--provider <provider>", "provider name; repeat for fan-out", collectProvider, [])
+    .option(
+      "--summary <summary>",
+      "summary metadata",
+      "Delegation created via fabrica-delegate create.",
+    )
+    .option("--metadata <json>", "extra JSON metadata for the record")
+    .action(async (options: FanoutOptions) => {
+      const { db, workspaceRoot } = program.opts<{ db?: string; workspaceRoot?: string }>();
+      const { registry, service } = openService(db, workspaceRoot);
+
+      try {
+        const metadata = parseMetadata(options.metadata);
+        const request: FanoutDelegationRequest = {
+          identity: options.identity,
+          status: options.status,
+          scope: options.scope,
+          providers: parseProviderList(options.provider),
+          summary: options.summary,
+          metadata,
+        };
+
+        const fanout = await service.fanOutDelegations(request);
+        printFanout(fanout);
       } finally {
         registry.close();
       }
