@@ -31,71 +31,100 @@ afterEach(() => {
   }
 });
 
+async function runProviderStartTest(options: {
+  provider: string;
+  commandName: string;
+  logFileName: string;
+  summary: string;
+}): Promise<void> {
+  const repoRoot = process.cwd();
+  const workspaceRoot = createTempDir("fabrica-cli-workspaces-");
+  const dataRoot = createTempDir("fabrica-cli-data-");
+  const binDir = createTempDir("fabrica-cli-bin-");
+  const logPath = path.join(dataRoot, options.logFileName);
+  const dbPath = path.join(dataRoot, "delegations.sqlite3");
+  const fakeCommand = path.join(binDir, options.commandName);
+
+  writeFileSync(
+    fakeCommand,
+    ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$WORKSPACE_LOG"'].join(
+      "\n",
+    ),
+  );
+  chmodSync(fakeCommand, 0o755);
+
+  const env = {
+    ...process.env,
+    FABRICA_DELEGATE_DB: dbPath,
+    FABRICA_WORKSPACE_ROOT: workspaceRoot,
+    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    WORKSPACE_LOG: logPath,
+  };
+
+  const createdOutput = runBun(
+    ["run", "src/index.ts", "create", "--provider", options.provider, "--summary", options.summary],
+    repoRoot,
+    env,
+  );
+  const delegationMatch = createdOutput.match(/Created delegation ([^\n]+)/);
+  const workspaceMatch = createdOutput.match(/workspace: (.+)/);
+
+  if (delegationMatch === null || delegationMatch[1] === undefined) {
+    throw new Error(createdOutput);
+  }
+  if (workspaceMatch === null || workspaceMatch[1] === undefined) {
+    throw new Error(createdOutput);
+  }
+
+  const delegationId = delegationMatch[1].trim();
+  const workspacePath = workspaceMatch[1].trim();
+
+  const startOutput = runBun(["run", "src/index.ts", "start", delegationId], repoRoot, env);
+  assert.match(startOutput, /status: running/);
+  assert.ok(startOutput.includes(`provider: ${options.provider}`), startOutput);
+  assert.match(startOutput, /pid: \d+/);
+
+  const deadline = Date.now() + 2000;
+  while (!existsSync(logPath) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  assert.equal(readFileSync(logPath, "utf8"), workspacePath);
+
+  const registry = new DelegationRegistry(dbPath);
+  const record = registry.show(delegationId);
+  registry.close();
+
+  assert.ok(record);
+  assert.equal(record?.status, "running");
+  assert.deepEqual(
+    record?.events.map((event) => event.eventType),
+    ["created", "started", "preparing", "running"],
+  );
+}
+
 test(
   "CLI start launches the OpenCode adapter in the isolated workspace and persists events",
   { timeout: 15000 },
   async () => {
-    const repoRoot = process.cwd();
-    const workspaceRoot = createTempDir("fabrica-cli-workspaces-");
-    const dataRoot = createTempDir("fabrica-cli-data-");
-    const binDir = createTempDir("fabrica-cli-bin-");
-    const logPath = path.join(dataRoot, "opencode-cwd.txt");
-    const dbPath = path.join(dataRoot, "delegations.sqlite3");
-    const fakeOpencode = path.join(binDir, "opencode");
+    await runProviderStartTest({
+      provider: "opencode",
+      commandName: "opencode",
+      logFileName: "opencode-cwd.txt",
+      summary: "issue 4",
+    });
+  },
+);
 
-    writeFileSync(
-      fakeOpencode,
-      ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$WORKSPACE_LOG"'].join(
-        "\n",
-      ),
-    );
-    chmodSync(fakeOpencode, 0o755);
-
-    const env = {
-      ...process.env,
-      FABRICA_DELEGATE_DB: dbPath,
-      FABRICA_WORKSPACE_ROOT: workspaceRoot,
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      WORKSPACE_LOG: logPath,
-    };
-
-    const createdOutput = runBun(
-      ["run", "src/index.ts", "create", "--summary", "issue 4"],
-      repoRoot,
-      env,
-    );
-    const delegationMatch = createdOutput.match(/Created delegation ([^\n]+)/);
-    const workspaceMatch = createdOutput.match(/workspace: (.+)/);
-
-    assert.ok(delegationMatch, createdOutput);
-    assert.ok(workspaceMatch, createdOutput);
-
-    assert.ok(delegationMatch?.[1]);
-    assert.ok(workspaceMatch?.[1]);
-    const delegationId = delegationMatch[1].trim();
-    const workspacePath = workspaceMatch[1].trim();
-
-    const startOutput = runBun(["run", "src/index.ts", "start", delegationId], repoRoot, env);
-    assert.match(startOutput, /status: running/);
-    assert.match(startOutput, /provider: opencode/);
-    assert.match(startOutput, /pid: \d+/);
-
-    const deadline = Date.now() + 2000;
-    while (!existsSync(logPath) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-
-    assert.equal(readFileSync(logPath, "utf8"), workspacePath);
-
-    const registry = new DelegationRegistry(dbPath);
-    const record = registry.show(delegationId);
-    registry.close();
-
-    assert.ok(record);
-    assert.equal(record?.status, "running");
-    assert.deepEqual(
-      record?.events.map((event) => event.eventType),
-      ["created", "started", "preparing", "running"],
-    );
+test(
+  "CLI start launches the Claude Code adapter in the isolated workspace and persists events",
+  { timeout: 15000 },
+  async () => {
+    await runProviderStartTest({
+      provider: "claude-code",
+      commandName: "claude",
+      logFileName: "claude-code-cwd.txt",
+      summary: "issue 8",
+    });
   },
 );

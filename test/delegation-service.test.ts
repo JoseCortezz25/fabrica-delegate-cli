@@ -39,14 +39,17 @@ function createGitRepo(): { repoRoot: string; workspaceRoot: string; registryPat
 }
 
 class RecordingAdapter implements DelegationProviderAdapter {
-  readonly provider = "opencode";
+  constructor(
+    readonly provider: string,
+    private readonly commandName: string,
+  ) {}
   public lastContext: DelegationLaunchContext | null = null;
 
   async start(context: DelegationLaunchContext): Promise<DelegationLaunchResult> {
     this.lastContext = context;
     return {
       provider: this.provider,
-      command: "fake-opencode",
+      command: this.commandName,
       args: ["--headless"],
       pid: 4242,
       workspaceReference: context.workspaceReference,
@@ -105,10 +108,10 @@ afterEach(() => {
   }
 });
 
-test("start records lifecycle events and launches the adapter in the isolated workspace", async () => {
+async function runStartLifecycleTest(provider: string, commandName: string): Promise<void> {
   const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
   const registry = new DelegationRegistry(registryPath);
-  const adapter = new RecordingAdapter();
+  const adapter = new RecordingAdapter(provider, commandName);
   const service = new DelegationService(
     registry,
     new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
@@ -117,13 +120,13 @@ test("start records lifecycle events and launches the adapter in the isolated wo
 
   const created = service.createDelegation({
     summary: "launch me",
-    provider: "opencode",
+    provider,
   });
 
   const started = await service.startDelegation(created.delegationId);
 
   assert.equal(started.record.status, "running");
-  assert.equal(started.record.provider, "opencode");
+  assert.equal(started.record.provider, provider);
   assert.equal(adapter.lastContext?.workspaceReference, created.workspaceReference);
   assert.equal(adapter.lastContext?.delegationId, created.delegationId);
   assert.equal(existsSync(created.workspaceReference), true);
@@ -141,6 +144,14 @@ test("start records lifecycle events and launches the adapter in the isolated wo
   assert.equal(shown.events.at(-1)?.payload.pid, 4242);
 
   registry.close();
+}
+
+test("start records lifecycle events and launches the adapter in the isolated workspace", async () => {
+  await runStartLifecycleTest("opencode", "fake-opencode");
+});
+
+test("start can dispatch the Claude Code adapter through the same lifecycle", async () => {
+  await runStartLifecycleTest("claude-code", "fake-claude");
 });
 
 test("stop records stopped even when no provider pid is tracked and is idempotent", async () => {
@@ -149,7 +160,7 @@ test("stop records stopped even when no provider pid is tracked and is idempoten
   const service = new DelegationService(
     registry,
     new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
-    { adapters: [new RecordingAdapter()] },
+    { adapters: [new RecordingAdapter("opencode", "fake-opencode")] },
   );
 
   const created = service.createDelegation({

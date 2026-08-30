@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { ClaudeCodeAdapter } from "./claude-code-adapter.js";
 import { OpenCodeAdapter } from "./opencode-adapter.js";
 import type { DelegationLaunchResult, DelegationProviderAdapter } from "./provider-adapters.js";
 import type {
@@ -124,7 +125,7 @@ export class DelegationService {
     private readonly workspaceManager: WorkspaceManager,
     options: DelegationServiceOptions = {},
   ) {
-    const adapters = options.adapters ?? [new OpenCodeAdapter()];
+    const adapters = options.adapters ?? [new OpenCodeAdapter(), new ClaudeCodeAdapter()];
     this.providers = adapterMap(adapters);
   }
 
