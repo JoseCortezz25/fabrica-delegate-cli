@@ -241,3 +241,59 @@ test("attach dispatches to a provider that supports live sessions", async () => 
 
   registry.close();
 });
+
+test("fan-out launches the same task across multiple providers and keeps the results comparable", async () => {
+  const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
+  const registry = new DelegationRegistry(registryPath);
+  const opencodeAdapter = new RecordingAdapter("opencode", "fake-opencode");
+  const claudeAdapter = new RecordingAdapter("claude-code", "fake-claude");
+  const service = new DelegationService(
+    registry,
+    new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
+    { adapters: [opencodeAdapter, claudeAdapter] },
+  );
+
+  const fanout = await service.fanOutDelegations({
+    summary: "compare providers",
+    providers: ["opencode", "claude-code"],
+    metadata: { ticket: "#12" },
+  });
+
+  assert.ok(fanout.groupId.length > 0);
+  assert.equal(fanout.entries.length, 2);
+  assert.deepEqual(
+    fanout.entries.map((entry) => entry.provider),
+    ["opencode", "claude-code"],
+  );
+  assert.deepEqual(
+    fanout.entries.map((entry) => entry.record.status),
+    ["running", "running"],
+  );
+  assert.equal(
+    opencodeAdapter.lastContext?.workspaceReference,
+    fanout.entries[0]?.record.workspaceReference,
+  );
+  assert.equal(
+    claudeAdapter.lastContext?.workspaceReference,
+    fanout.entries[1]?.record.workspaceReference,
+  );
+  assert.notEqual(
+    fanout.entries[0]?.record.workspaceReference,
+    fanout.entries[1]?.record.workspaceReference,
+  );
+  assert.deepEqual(fanout.entries[0]?.record.metadata.fanout, {
+    groupId: fanout.groupId,
+    provider: "opencode",
+    providerIndex: 0,
+    providerCount: 2,
+    providers: ["opencode", "claude-code"],
+  });
+  assert.equal(fanout.entries[0]?.error, null);
+  assert.equal(fanout.entries[1]?.error, null);
+
+  const shown = registry.list();
+  assert.equal(shown.length, 2);
+  assert.deepEqual(shown.map((record) => record.provider).sort(), ["claude-code", "opencode"]);
+
+  registry.close();
+});
