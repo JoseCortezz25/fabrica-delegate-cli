@@ -7,6 +7,24 @@ export interface DelegationMetadata {
   [key: string]: unknown;
 }
 
+export interface DelegationArtifact {
+  path: string;
+  kind?: string;
+  description?: string;
+}
+
+export interface DelegationFinalResult {
+  delegationId: string;
+  status: string;
+  exitCode: number;
+  summary: string;
+  metadata: DelegationMetadata;
+  artifacts: DelegationArtifact[];
+  workspaceReference: string;
+  recordedAt: string;
+  sourceEventId: number;
+}
+
 export interface CreateDelegationInput {
   delegationId?: string;
   identity: string;
@@ -37,6 +55,7 @@ export interface DelegationRecord {
   metadata: DelegationMetadata;
   createdAt: string;
   updatedAt: string;
+  result: DelegationFinalResult | null;
   events: DelegationEvent[];
 }
 
@@ -99,6 +118,43 @@ function parseJsonObject(value: string): DelegationMetadata {
   }
 
   return parsed as DelegationMetadata;
+}
+
+function parseArtifacts(value: unknown): DelegationArtifact[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((artifact) => {
+    if (artifact === null || typeof artifact !== "object") {
+      return [];
+    }
+
+    const candidate = artifact as Record<string, unknown>;
+    const path = candidate.path;
+    if (typeof path !== "string" || path.trim().length === 0) {
+      return [];
+    }
+
+    const normalized: DelegationArtifact = { path };
+    if (typeof candidate.kind === "string" && candidate.kind.trim().length > 0) {
+      normalized.kind = candidate.kind;
+    }
+    if (typeof candidate.description === "string" && candidate.description.trim().length > 0) {
+      normalized.description = candidate.description;
+    }
+
+    return [normalized];
+  });
+}
+
+function asPositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.trunc(value);
+  return rounded >= 0 ? rounded : null;
 }
 
 function nowIso(): string {
@@ -355,6 +411,8 @@ export class DelegationRegistry {
       return null;
     }
 
+    const events = this.listEvents(delegationId);
+
     return {
       delegationId: row.delegation_id,
       identity: row.identity,
@@ -366,8 +424,72 @@ export class DelegationRegistry {
       metadata: parseJsonObject(row.metadata_json),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      events: this.listEvents(delegationId),
+      result: this.extractFinalResult({
+        delegationId: row.delegation_id,
+        workspaceReference: row.workspace_reference,
+        status: row.status,
+        summary: row.summary,
+        metadataJson: row.metadata_json,
+        events,
+      }),
+      events,
     };
+  }
+
+  recordFinalResult(
+    delegationId: string,
+    payload: {
+      exitCode: number;
+      summary?: string;
+      artifacts?: DelegationArtifact[];
+      metadata?: DelegationMetadata;
+      status?: string;
+      sourceEventType?: string;
+    },
+  ): DelegationRecord {
+    const recordedAt = nowIso();
+    const normalizedArtifacts = payload.artifacts ?? [];
+
+    this.database.exec("BEGIN");
+    try {
+      const result = this.database
+        .query(
+          `UPDATE delegations
+           SET updated_at = ?
+           WHERE delegation_id = ?;`,
+        )
+        .run(recordedAt, delegationId);
+
+      if (result.changes === 0) {
+        throw new Error(`Delegation not found: ${delegationId}`);
+      }
+
+      this.recordEvent(
+        delegationId,
+        payload.sourceEventType ?? "result",
+        {
+          delegationId,
+          status: payload.status,
+          exitCode: payload.exitCode,
+          summary: payload.summary,
+          metadata: payload.metadata ?? {},
+          artifacts: normalizedArtifacts,
+          recordedAt,
+        },
+        recordedAt,
+      );
+
+      this.database.exec("COMMIT");
+      const updated = this.show(delegationId);
+      if (updated === null) {
+        throw new Error("delegation was updated but could not be read back");
+      }
+
+      return updated;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(): void {
@@ -414,5 +536,50 @@ export class DelegationRegistry {
       payload: parseJsonObject(row.payload_json),
       createdAt: row.created_at,
     }));
+  }
+
+  private extractFinalResult(input: {
+    delegationId: string;
+    workspaceReference: string;
+    status: string;
+    summary: string;
+    metadataJson: string;
+    events: DelegationEvent[];
+  }): DelegationFinalResult | null {
+    for (let index = input.events.length - 1; index >= 0; index -= 1) {
+      const event = input.events[index];
+      if (event?.eventType !== "result") {
+        continue;
+      }
+
+      const payload = event.payload as Record<string, unknown>;
+      const exitCode = asPositiveInteger(payload.exitCode);
+      if (exitCode === null) {
+        continue;
+      }
+
+      return {
+        delegationId: input.delegationId,
+        status:
+          typeof payload.status === "string" && payload.status.trim().length > 0
+            ? payload.status
+            : input.status,
+        exitCode,
+        summary:
+          typeof payload.summary === "string" && payload.summary.trim().length > 0
+            ? payload.summary
+            : input.summary,
+        metadata: parseJsonObject(input.metadataJson),
+        artifacts: parseArtifacts(payload.artifacts),
+        workspaceReference: input.workspaceReference,
+        recordedAt:
+          typeof payload.recordedAt === "string" && payload.recordedAt.trim().length > 0
+            ? payload.recordedAt
+            : event.createdAt,
+        sourceEventId: event.eventId,
+      };
+    }
+
+    return null;
   }
 }

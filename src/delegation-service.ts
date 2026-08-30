@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { OpenCodeAdapter } from "./opencode-adapter.js";
 import type { DelegationLaunchResult, DelegationProviderAdapter } from "./provider-adapters.js";
-import type { CreateDelegationInput, DelegationRecord, DelegationRegistry } from "./registry.js";
+import type {
+  CreateDelegationInput,
+  DelegationArtifact,
+  DelegationRecord,
+  DelegationRegistry,
+} from "./registry.js";
 import type { WorkspaceManager } from "./workspace-manager.js";
 
 export interface CreateDelegationRequest {
@@ -61,6 +66,34 @@ function findLaunchPid(record: DelegationRecord): number | null {
   }
 
   return null;
+}
+
+function normalizeArtifacts(metadata: Record<string, unknown>): DelegationArtifact[] {
+  const rawArtifacts = metadata.artifacts;
+  if (!Array.isArray(rawArtifacts)) {
+    return [];
+  }
+
+  return rawArtifacts.flatMap((artifact) => {
+    if (artifact === null || typeof artifact !== "object") {
+      return [];
+    }
+
+    const candidate = artifact as Record<string, unknown>;
+    if (typeof candidate.path !== "string" || candidate.path.trim().length === 0) {
+      return [];
+    }
+
+    const normalized: DelegationArtifact = { path: candidate.path };
+    if (typeof candidate.kind === "string" && candidate.kind.trim().length > 0) {
+      normalized.kind = candidate.kind;
+    }
+    if (typeof candidate.description === "string" && candidate.description.trim().length > 0) {
+      normalized.description = candidate.description;
+    }
+
+    return [normalized];
+  });
 }
 
 async function waitForProcessExit(pid: number, timeoutMs = 2000): Promise<boolean> {
@@ -198,7 +231,7 @@ export class DelegationService {
     }
 
     const pid = findLaunchPid(record);
-    if (record.status === "stopped") {
+    if (record.status === "stopped" && record.result !== null) {
       return { record, pid };
     }
 
@@ -211,13 +244,23 @@ export class DelegationService {
       previousStatus: record.status,
     };
 
+    const artifacts = normalizeArtifacts(record.metadata);
+
     if (pid === null) {
       const stopped = this.registry.recordLifecycleEvent(delegationId, "stopped", "stopped", {
         ...stopContext,
         signal: null,
       });
+      const result = this.registry.recordFinalResult(delegationId, {
+        exitCode: 0,
+        status: stopped.status,
+        summary: stopped.summary,
+        metadata: stopped.metadata,
+        artifacts,
+        sourceEventType: "result",
+      });
 
-      return { record: stopped, pid: null };
+      return { record: result, pid: null };
     }
 
     try {
@@ -246,8 +289,16 @@ export class DelegationService {
         ...stopContext,
         signal: exited ? "SIGTERM" : "SIGKILL",
       });
+      const result = this.registry.recordFinalResult(delegationId, {
+        exitCode: exited ? 143 : 137,
+        status: stopped.status,
+        summary: stopped.summary,
+        metadata: stopped.metadata,
+        artifacts,
+        sourceEventType: "result",
+      });
 
-      return { record: stopped, pid };
+      return { record: result, pid };
     } catch (error) {
       this.registry.recordLifecycleEvent(delegationId, "failed", "stop_failed", {
         ...stopContext,

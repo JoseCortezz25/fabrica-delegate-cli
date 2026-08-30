@@ -31,6 +31,68 @@ afterEach(() => {
   }
 });
 
+test("CLI result and show expose the final outcome and artifact locations", () => {
+  const repoRoot = process.cwd();
+  const dataRoot = createTempDir("fabrica-cli-result-data-");
+  const dbPath = path.join(dataRoot, "delegations.sqlite3");
+  const workspaceRoot = path.join(dataRoot, "workspaces");
+  const registry = new DelegationRegistry(dbPath);
+
+  const created = registry.create({
+    identity: "factory-agent",
+    status: "completed",
+    scope: "repository",
+    provider: "opencode",
+    workspaceReference: path.join(workspaceRoot, "delegation-7"),
+    summary: "final result demo",
+    metadata: {
+      ticket: "#7",
+      artifacts: [
+        {
+          path: path.join(workspaceRoot, "delegation-7", "artifacts", "final-summary.md"),
+          kind: "file",
+          description: "final summary markdown",
+        },
+      ],
+    },
+  });
+
+  registry.recordFinalResult(created.delegationId, {
+    exitCode: 0,
+    status: "completed",
+    summary: created.summary,
+    metadata: created.metadata,
+    artifacts: [
+      {
+        path: path.join(workspaceRoot, "delegation-7", "artifacts", "final-summary.md"),
+        kind: "file",
+        description: "final summary markdown",
+      },
+    ],
+  });
+  registry.close();
+
+  const env = {
+    ...process.env,
+    FABRICA_DELEGATE_DB: dbPath,
+  };
+
+  const showOutput = runBun(["run", "src/index.ts", "show", created.delegationId], repoRoot, env);
+  assert.match(showOutput, /result:/);
+  assert.match(showOutput, /exit_code: 0/);
+  assert.match(showOutput, /final summary markdown/);
+  assert.match(showOutput, /workspace:/);
+
+  const resultOutput = runBun(
+    ["run", "src/index.ts", "result", created.delegationId],
+    repoRoot,
+    env,
+  );
+  assert.match(resultOutput, /final result/);
+  assert.match(resultOutput, /exit_code: 0/);
+  assert.match(resultOutput, /final-summary\.md/);
+});
+
 test("CLI stop terminates a running provider and persists stopped state", async () => {
   const repoRoot = process.cwd();
   const workspaceRoot = createTempDir("fabrica-cli-workspaces-");
@@ -101,6 +163,7 @@ test("CLI stop terminates a running provider and persists stopped state", async 
   assert.equal(record?.status, "stopped");
   assert.deepEqual(
     record?.events.map((event) => event.eventType),
-    ["created", "started", "preparing", "running", "stopped"],
+    ["created", "started", "preparing", "running", "stopped", "result"],
   );
+  assert.equal(record?.result?.exitCode, 143);
 });

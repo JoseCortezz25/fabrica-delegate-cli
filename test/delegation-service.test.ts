@@ -166,7 +166,7 @@ test("stop records stopped even when no provider pid is tracked and is idempoten
   assert.equal(stoppedAgain.pid, null);
   assert.deepEqual(
     stoppedAgain.record.events.map((event) => event.eventType),
-    ["created", "stopped"],
+    ["created", "stopped", "result"],
   );
 
   const shown = registry.show(created.delegationId);
@@ -177,7 +177,7 @@ test("stop records stopped even when no provider pid is tracked and is idempoten
   assert.equal(shown.status, "stopped");
   assert.deepEqual(
     shown.events.map((event) => event.eventType),
-    ["created", "stopped"],
+    ["created", "stopped", "result"],
   );
 
   registry.close();
@@ -259,8 +259,12 @@ test("stop terminates the provider process and persists the stopped state", asyn
   assert.equal(shown.status, "stopped");
   assert.deepEqual(
     shown.events.map((event) => event.eventType),
-    ["created", "started", "preparing", "running", "stopped"],
+    ["created", "started", "preparing", "running", "stopped", "result"],
   );
+  assert.equal(shown.status, "stopped");
+  assert.equal(shown.result?.exitCode, 143);
+  assert.equal(shown.result?.summary, "stop me");
+  assert.equal(shown.result?.artifacts.length, 0);
 
   registry.close();
 });
