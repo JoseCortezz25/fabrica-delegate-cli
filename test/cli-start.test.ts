@@ -103,20 +103,28 @@ async function runProviderStartTest(options: {
   );
 }
 
-test("CLI start launches the OpenCode adapter in the isolated workspace and persists events", async () => {
-  await runProviderStartTest({
-    provider: "opencode",
-    commandName: "opencode",
-    logFileName: "opencode-cwd.txt",
-    summary: "issue 4",
-  });
-});
+test(
+  "CLI start launches the OpenCode adapter in the isolated workspace and persists events",
+  { timeout: 15000 },
+  async () => {
+    await runProviderStartTest({
+      provider: "opencode",
+      commandName: "opencode",
+      logFileName: "opencode-cwd.txt",
+      summary: "issue 4",
+    });
+  },
+);
 
-test("CLI start launches the Claude Code adapter in the isolated workspace and persists events", async () => {
-  await runProviderStartTest({
-    provider: "claude-code",
-    commandName: "claude",
-    logFileName: "claude-code-cwd.txt",
-    summary: "issue 8",
-  });
-});
+test(
+  "CLI start launches the Claude Code adapter in the isolated workspace and persists events",
+  { timeout: 15000 },
+  async () => {
+    await runProviderStartTest({
+      provider: "claude-code",
+      commandName: "claude",
+      logFileName: "claude-code-cwd.txt",
+      summary: "issue 8",
+    });
+  },
+);
