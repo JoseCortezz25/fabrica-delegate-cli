@@ -200,7 +200,7 @@ export function formatReplayLines(record: DelegationRecord): string[] {
 }
 
 export function printReplay(registry: DelegationRegistry, delegationId: string): void {
-  const record = registry.show(delegationId);
+  const record = registry.replay(delegationId);
 
   if (record === null) {
     throw new Error(`Delegation not found: ${delegationId}`);

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -93,6 +94,12 @@ test("CLI replay reconstructs the persisted event stream with transitions and co
     sourceEventType: "result",
   });
   registry.close();
+
+  const sqlite = new Database(dbPath);
+  sqlite.exec("PRAGMA foreign_keys = OFF;");
+  sqlite.query("DELETE FROM delegations WHERE delegation_id = ?;").run(created.delegationId);
+  sqlite.exec("PRAGMA foreign_keys = ON;");
+  sqlite.close();
 
   const output = runBun(["run", "src/index.ts", "replay", created.delegationId], repoRoot, {
     ...process.env,

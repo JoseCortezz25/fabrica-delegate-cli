@@ -59,6 +59,17 @@ export interface DelegationRecord {
   events: DelegationEvent[];
 }
 
+const LIFECYCLE_EVENT_TYPES = new Set([
+  "started",
+  "preparing",
+  "running",
+  "failed",
+  "stopped",
+  "completed",
+  "cancelled",
+  "canceled",
+]);
+
 export interface DelegationSummary {
   delegationId: string;
   identity: string;
@@ -432,6 +443,98 @@ export class DelegationRegistry {
         status: row.status,
         summary: row.summary,
         metadataJson: row.metadata_json,
+        events,
+      }),
+      events,
+    };
+  }
+
+  replay(delegationId: string): DelegationRecord | null {
+    const events = this.listEvents(delegationId);
+    if (events.length === 0) {
+      return null;
+    }
+
+    const createdEvent = events.find((event) => event.eventType === "created");
+    if (createdEvent === undefined) {
+      return null;
+    }
+
+    const createdPayload = createdEvent.payload as Record<string, unknown>;
+    const createdMetadata =
+      createdPayload.metadata !== undefined &&
+      createdPayload.metadata !== null &&
+      typeof createdPayload.metadata === "object" &&
+      !Array.isArray(createdPayload.metadata)
+        ? (createdPayload.metadata as DelegationMetadata)
+        : {};
+
+    let identity = typeof createdPayload.identity === "string" ? createdPayload.identity : "";
+    let status = typeof createdPayload.status === "string" ? createdPayload.status : "";
+    let scope = typeof createdPayload.scope === "string" ? createdPayload.scope : "";
+    let provider = typeof createdPayload.provider === "string" ? createdPayload.provider : "";
+    let workspaceReference =
+      typeof createdPayload.workspaceReference === "string"
+        ? createdPayload.workspaceReference
+        : "";
+    let summary = typeof createdPayload.summary === "string" ? createdPayload.summary : "";
+    let updatedAt = createdEvent.createdAt;
+
+    for (const event of events) {
+      updatedAt = event.createdAt;
+
+      if (event.eventType === "created") {
+        continue;
+      }
+
+      const payload = event.payload as Record<string, unknown>;
+      if (typeof payload.status === "string" && payload.status.trim().length > 0) {
+        status = payload.status;
+      } else if (LIFECYCLE_EVENT_TYPES.has(event.eventType.toLowerCase())) {
+        status = event.eventType;
+      }
+
+      if (
+        typeof payload.workspaceReference === "string" &&
+        payload.workspaceReference.trim().length > 0
+      ) {
+        workspaceReference = payload.workspaceReference;
+      }
+
+      if (typeof payload.summary === "string" && payload.summary.trim().length > 0) {
+        summary = payload.summary;
+      }
+
+      if (typeof payload.identity === "string" && payload.identity.trim().length > 0) {
+        identity = payload.identity;
+      }
+
+      if (typeof payload.scope === "string" && payload.scope.trim().length > 0) {
+        scope = payload.scope;
+      }
+
+      if (typeof payload.provider === "string" && payload.provider.trim().length > 0) {
+        provider = payload.provider;
+      }
+    }
+
+    return {
+      delegationId,
+      identity,
+      status,
+      scope,
+      provider,
+      workspaceReference,
+      summary,
+      metadata: createdMetadata,
+      createdAt: createdEvent.createdAt,
+      updatedAt,
+      result: this.extractFinalResult({
+        delegationId,
+        workspaceReference,
+        status,
+        summary,
+        metadataJson: JSON.stringify(createdMetadata),
         events,
       }),
       events,
