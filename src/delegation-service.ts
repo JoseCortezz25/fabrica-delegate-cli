@@ -273,6 +273,9 @@ export class DelegationService {
       workspaceReference: resolvedWorkspace,
       summary: workspaceRecord.summary,
       metadata: workspaceRecord.metadata,
+      emitEvent: (eventType: string, payload: Record<string, unknown>) => {
+        this.registry.recordEvent(delegationId, eventType, payload);
+      },
     };
 
     const started = this.registry.recordLifecycleEvent(
@@ -336,6 +339,9 @@ export class DelegationService {
       summary: record.summary,
       metadata: record.metadata,
       previousStatus: record.status,
+      emitEvent: (eventType: string, payload: Record<string, unknown>) => {
+        this.registry.recordEvent(delegationId, eventType, payload);
+      },
     };
 
     const resumed = this.registry.recordLifecycleEvent(

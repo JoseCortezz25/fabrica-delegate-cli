@@ -153,6 +153,21 @@ function formatEventDetails(event: DelegationEvent): string[] {
     return details;
   }
 
+  if (event.eventType === "provider_stdout" || event.eventType === "provider_stderr") {
+    const values = [
+      formatPayloadDetail("stream", payload.stream),
+      formatPayloadDetail("chunk", payload.chunk),
+    ];
+
+    for (const value of values) {
+      if (value !== null) {
+        details.push(value);
+      }
+    }
+
+    return details;
+  }
+
   const values = [
     formatPayloadDetail("previous_status", payload.previousStatus),
     formatPayloadDetail("error", payload.error),

@@ -28,7 +28,27 @@ export class ClaudeCodeAdapter implements DelegationProviderAdapter {
           ...this.options.env,
         },
         detached: true,
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      const emitOutput = (eventType: string, chunk: Buffer): void => {
+        const text = chunk.toString("utf8");
+        if (text.trim().length === 0) {
+          return;
+        }
+
+        context.emitEvent?.(eventType, {
+          delegationId: context.delegationId,
+          stream: eventType,
+          chunk: text,
+        });
+      };
+
+      child.stdout?.on("data", (chunk: Buffer) => {
+        emitOutput("provider_stdout", chunk);
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        emitOutput("provider_stderr", chunk);
       });
 
       child.once("error", (error) => {

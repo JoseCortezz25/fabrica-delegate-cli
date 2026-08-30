@@ -3,6 +3,7 @@ export interface DelegationLaunchContext {
   workspaceReference: string;
   summary: string;
   metadata: Record<string, unknown>;
+  emitEvent?: (eventType: string, payload: Record<string, unknown>) => void;
 }
 
 export interface DelegationAttachContext extends DelegationLaunchContext {

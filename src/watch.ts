@@ -22,6 +22,7 @@ const TERMINAL_STATUSES = new Set([
   "canceled",
   "done",
   "finished",
+  "stopped",
 ]);
 const IMPORTANT_EVENT_TYPES = new Set([
   "created",
@@ -29,6 +30,8 @@ const IMPORTANT_EVENT_TYPES = new Set([
   "started",
   "preparing",
   "running",
+  "provider_stdout",
+  "provider_stderr",
   "failed",
   "completed",
   "cancelled",
