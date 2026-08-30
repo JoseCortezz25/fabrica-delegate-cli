@@ -1,3 +1,7 @@
-import { main } from "./cli";
+import { main } from "./cli.js";
 
-void main();
+void main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  process.exitCode = 1;
+});
