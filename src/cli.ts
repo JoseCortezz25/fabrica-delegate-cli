@@ -40,7 +40,13 @@ function parseMetadata(metadata?: string): Record<string, unknown> | undefined {
     return undefined;
   }
 
-  const parsed = JSON.parse(metadata) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(metadata);
+  } catch {
+    throw new Error("--metadata must be a JSON object");
+  }
+
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("--metadata must be a JSON object");
   }
