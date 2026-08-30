@@ -183,6 +183,22 @@ function printResult(registry: DelegationRegistry, delegationId: string): void {
   console.log(`  recorded_at: ${result.recordedAt}`);
   console.log(`  metadata: ${JSON.stringify(result.metadata, null, 2)}`);
   console.log(`  artifacts: ${JSON.stringify(result.artifacts, null, 2)}`);
+  const outputEvents = record.events.filter(
+    (event) => event.eventType === "provider_stdout" || event.eventType === "provider_stderr",
+  );
+  if (outputEvents.length > 0) {
+    console.log("  provider_output:");
+    for (const event of outputEvents) {
+      const payload = event.payload as Record<string, unknown>;
+      const stream = typeof payload.stream === "string" ? payload.stream : event.eventType;
+      const chunk = typeof payload.chunk === "string" ? payload.chunk.trimEnd() : "";
+      for (const line of chunk.split(/\r?\n/)) {
+        if (line.length > 0) {
+          console.log(`    - [${stream}] ${line}`);
+        }
+      }
+    }
+  }
 }
 
 export function buildCli(): Command {

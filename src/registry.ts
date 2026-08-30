@@ -248,7 +248,7 @@ export class DelegationRegistry {
           createdAt,
         );
 
-      this.recordEvent(
+      this.appendEvent(
         delegationId,
         "created",
         {
@@ -294,7 +294,7 @@ export class DelegationRegistry {
         throw new Error(`Delegation not found: ${delegationId}`);
       }
 
-      this.recordEvent(
+      this.appendEvent(
         delegationId,
         "workspace_updated",
         { delegationId, workspaceReference },
@@ -336,7 +336,7 @@ export class DelegationRegistry {
         throw new Error(`Delegation not found: ${delegationId}`);
       }
 
-      this.recordEvent(delegationId, eventType, payload, createdAt);
+      this.appendEvent(delegationId, eventType, payload, createdAt);
       this.database.exec("COMMIT");
 
       const updated = this.show(delegationId);
@@ -569,7 +569,7 @@ export class DelegationRegistry {
         throw new Error(`Delegation not found: ${delegationId}`);
       }
 
-      this.recordEvent(
+      this.appendEvent(
         delegationId,
         payload.sourceEventType ?? "result",
         {
@@ -601,7 +601,7 @@ export class DelegationRegistry {
     this.database.close();
   }
 
-  private recordEvent(
+  private appendEvent(
     delegationId: string,
     eventType: string,
     payload: DelegationMetadata,
@@ -617,6 +617,42 @@ export class DelegationRegistry {
         ) VALUES (?, ?, ?, ?);`,
       )
       .run(delegationId, eventType, JSON.stringify(payload), createdAt);
+  }
+
+  recordEvent(
+    delegationId: string,
+    eventType: string,
+    payload: DelegationMetadata,
+  ): DelegationRecord {
+    const createdAt = nowIso();
+
+    this.database.exec("BEGIN");
+    try {
+      const result = this.database
+        .query(
+          `UPDATE delegations
+           SET updated_at = ?
+           WHERE delegation_id = ?;`,
+        )
+        .run(createdAt, delegationId);
+
+      if (result.changes === 0) {
+        throw new Error(`Delegation not found: ${delegationId}`);
+      }
+
+      this.appendEvent(delegationId, eventType, payload, createdAt);
+      this.database.exec("COMMIT");
+
+      const updated = this.show(delegationId);
+      if (updated === null) {
+        throw new Error("delegation was updated but could not be read back");
+      }
+
+      return updated;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   private listEvents(delegationId: string): DelegationEvent[] {
