@@ -31,22 +31,27 @@ afterEach(() => {
   }
 });
 
-test("CLI start launches the OpenCode adapter in the isolated workspace and persists events", async () => {
+async function runProviderStartTest(options: {
+  provider: string;
+  commandName: string;
+  logFileName: string;
+  summary: string;
+}): Promise<void> {
   const repoRoot = process.cwd();
   const workspaceRoot = createTempDir("fabrica-cli-workspaces-");
   const dataRoot = createTempDir("fabrica-cli-data-");
   const binDir = createTempDir("fabrica-cli-bin-");
-  const logPath = path.join(dataRoot, "opencode-cwd.txt");
+  const logPath = path.join(dataRoot, options.logFileName);
   const dbPath = path.join(dataRoot, "delegations.sqlite3");
-  const fakeOpencode = path.join(binDir, "opencode");
+  const fakeCommand = path.join(binDir, options.commandName);
 
   writeFileSync(
-    fakeOpencode,
+    fakeCommand,
     ["#!/usr/bin/env bash", "set -euo pipefail", 'printf "%s" "$PWD" > "$WORKSPACE_LOG"'].join(
       "\n",
     ),
   );
-  chmodSync(fakeOpencode, 0o755);
+  chmodSync(fakeCommand, 0o755);
 
   const env = {
     ...process.env,
@@ -57,24 +62,26 @@ test("CLI start launches the OpenCode adapter in the isolated workspace and pers
   };
 
   const createdOutput = runBun(
-    ["run", "src/index.ts", "create", "--summary", "issue 4"],
+    ["run", "src/index.ts", "create", "--provider", options.provider, "--summary", options.summary],
     repoRoot,
     env,
   );
   const delegationMatch = createdOutput.match(/Created delegation ([^\n]+)/);
   const workspaceMatch = createdOutput.match(/workspace: (.+)/);
 
-  assert.ok(delegationMatch, createdOutput);
-  assert.ok(workspaceMatch, createdOutput);
+  if (delegationMatch === null || delegationMatch[1] === undefined) {
+    throw new Error(createdOutput);
+  }
+  if (workspaceMatch === null || workspaceMatch[1] === undefined) {
+    throw new Error(createdOutput);
+  }
 
-  assert.ok(delegationMatch?.[1]);
-  assert.ok(workspaceMatch?.[1]);
   const delegationId = delegationMatch[1].trim();
   const workspacePath = workspaceMatch[1].trim();
 
   const startOutput = runBun(["run", "src/index.ts", "start", delegationId], repoRoot, env);
   assert.match(startOutput, /status: running/);
-  assert.match(startOutput, /provider: opencode/);
+  assert.ok(startOutput.includes(`provider: ${options.provider}`), startOutput);
   assert.match(startOutput, /pid: \d+/);
 
   const deadline = Date.now() + 2000;
@@ -94,4 +101,22 @@ test("CLI start launches the OpenCode adapter in the isolated workspace and pers
     record?.events.map((event) => event.eventType),
     ["created", "started", "preparing", "running"],
   );
+}
+
+test("CLI start launches the OpenCode adapter in the isolated workspace and persists events", async () => {
+  await runProviderStartTest({
+    provider: "opencode",
+    commandName: "opencode",
+    logFileName: "opencode-cwd.txt",
+    summary: "issue 4",
+  });
+});
+
+test("CLI start launches the Claude Code adapter in the isolated workspace and persists events", async () => {
+  await runProviderStartTest({
+    provider: "claude-code",
+    commandName: "claude",
+    logFileName: "claude-code-cwd.txt",
+    summary: "issue 8",
+  });
 });

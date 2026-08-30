@@ -39,14 +39,17 @@ function createGitRepo(): { repoRoot: string; workspaceRoot: string; registryPat
 }
 
 class RecordingAdapter implements DelegationProviderAdapter {
-  readonly provider = "opencode";
+  constructor(
+    readonly provider: string,
+    private readonly commandName: string,
+  ) {}
   public lastContext: DelegationLaunchContext | null = null;
 
   async start(context: DelegationLaunchContext): Promise<DelegationLaunchResult> {
     this.lastContext = context;
     return {
       provider: this.provider,
-      command: "fake-opencode",
+      command: this.commandName,
       args: ["--headless"],
       pid: 4242,
       workspaceReference: context.workspaceReference,
@@ -67,7 +70,7 @@ afterEach(() => {
 test("start records lifecycle events and launches the adapter in the isolated workspace", async () => {
   const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
   const registry = new DelegationRegistry(registryPath);
-  const adapter = new RecordingAdapter();
+  const adapter = new RecordingAdapter("opencode", "fake-opencode");
   const service = new DelegationService(
     registry,
     new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
@@ -83,6 +86,44 @@ test("start records lifecycle events and launches the adapter in the isolated wo
 
   assert.equal(started.record.status, "running");
   assert.equal(started.record.provider, "opencode");
+  assert.equal(adapter.lastContext?.workspaceReference, created.workspaceReference);
+  assert.equal(adapter.lastContext?.delegationId, created.delegationId);
+  assert.equal(existsSync(created.workspaceReference), true);
+
+  const shown = registry.show(created.delegationId);
+  if (shown === null) {
+    throw new Error("expected delegation to exist after start");
+  }
+
+  assert.deepEqual(
+    shown.events.map((event) => event.eventType),
+    ["created", "started", "preparing", "running"],
+  );
+  assert.equal(shown.status, "running");
+  assert.equal(shown.events.at(-1)?.payload.pid, 4242);
+
+  registry.close();
+});
+
+test("start can dispatch the Claude Code adapter through the same lifecycle", async () => {
+  const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
+  const registry = new DelegationRegistry(registryPath);
+  const adapter = new RecordingAdapter("claude-code", "fake-claude");
+  const service = new DelegationService(
+    registry,
+    new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
+    { adapters: [adapter] },
+  );
+
+  const created = service.createDelegation({
+    summary: "launch me",
+    provider: "claude-code",
+  });
+
+  const started = await service.startDelegation(created.delegationId);
+
+  assert.equal(started.record.status, "running");
+  assert.equal(started.record.provider, "claude-code");
   assert.equal(adapter.lastContext?.workspaceReference, created.workspaceReference);
   assert.equal(adapter.lastContext?.delegationId, created.delegationId);
   assert.equal(existsSync(created.workspaceReference), true);
