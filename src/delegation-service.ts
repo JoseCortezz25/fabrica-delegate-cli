@@ -25,6 +25,11 @@ export interface StartDelegationResult {
   launch: DelegationLaunchResult;
 }
 
+export interface ResumeDelegationResult {
+  record: DelegationRecord;
+  launch: DelegationLaunchResult;
+}
+
 export interface AttachDelegationResult {
   record: DelegationRecord;
   pid: number | null;
@@ -245,6 +250,69 @@ export class DelegationService {
     const preparing = this.registry.recordLifecycleEvent(delegationId, "preparing", "preparing", {
       ...lifecycleContext,
       previousStatus: started.status,
+    });
+
+    try {
+      const launch = await adapter.start(lifecycleContext);
+      const running = this.registry.recordLifecycleEvent(delegationId, "running", "running", {
+        ...lifecycleContext,
+        pid: launch.pid,
+        command: launch.command,
+        args: launch.args,
+        provider: launch.provider,
+        launchedAt: launch.startedAt,
+      });
+
+      return { record: running, launch };
+    } catch (error) {
+      this.registry.recordLifecycleEvent(delegationId, "failed", "failed", {
+        ...lifecycleContext,
+        previousStatus: preparing.status,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  async resumeDelegation(delegationId: string): Promise<ResumeDelegationResult> {
+    const record = this.registry.show(delegationId);
+
+    if (record === null) {
+      throw new Error(`Delegation not found: ${delegationId}`);
+    }
+
+    if (record.status !== "stopped" && record.status !== "failed") {
+      throw new Error(`Delegation ${delegationId} is not resumable from status ${record.status}`);
+    }
+
+    if (!existsSync(record.workspaceReference)) {
+      throw new Error(
+        `Workspace not found for delegation ${delegationId}: ${record.workspaceReference}`,
+      );
+    }
+
+    const adapter = this.providers.get(record.provider);
+    if (adapter === undefined) {
+      throw new Error(`No provider adapter registered for ${record.provider}`);
+    }
+
+    const lifecycleContext = {
+      delegationId,
+      workspaceReference: record.workspaceReference,
+      summary: record.summary,
+      metadata: record.metadata,
+      previousStatus: record.status,
+    };
+
+    const resumed = this.registry.recordLifecycleEvent(
+      delegationId,
+      "resuming",
+      "resumed",
+      lifecycleContext,
+    );
+    const preparing = this.registry.recordLifecycleEvent(delegationId, "preparing", "preparing", {
+      ...lifecycleContext,
+      previousStatus: resumed.status,
     });
 
     try {
