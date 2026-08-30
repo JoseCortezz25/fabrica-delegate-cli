@@ -138,6 +138,7 @@ async function runStartLifecycleTest(provider: string, commandName: string): Pro
   assert.equal(started.record.provider, provider);
   assert.equal(adapter.lastContext?.workspaceReference, created.workspaceReference);
   assert.equal(adapter.lastContext?.delegationId, created.delegationId);
+  assert.equal(adapter.lastContext?.summary, "launch me");
   assert.equal(existsSync(created.workspaceReference), true);
 
   const shown = registry.show(created.delegationId);

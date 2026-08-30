@@ -18,7 +18,7 @@ export class OpenCodeAdapter implements DelegationProviderAdapter {
 
   async start(context: DelegationLaunchContext): Promise<DelegationLaunchResult> {
     const command = this.options.command ?? "opencode";
-    const args = [...(this.options.args ?? [])];
+    const args = [...(this.options.args ?? []), "run", context.summary];
 
     return await new Promise<DelegationLaunchResult>((resolve, reject) => {
       const child = spawn(command, args, {

@@ -18,7 +18,7 @@ export class ClaudeCodeAdapter implements DelegationProviderAdapter {
 
   async start(context: DelegationLaunchContext): Promise<DelegationLaunchResult> {
     const command = this.options.command ?? "claude";
-    const args = [...(this.options.args ?? [])];
+    const args = [...(this.options.args ?? []), "-p", context.summary];
 
     return await new Promise<DelegationLaunchResult>((resolve, reject) => {
       const child = spawn(command, args, {
