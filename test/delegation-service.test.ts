@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 import { DelegationService } from "../src/delegation-service.js";
 import type {
+  DelegationAttachContext,
   DelegationLaunchContext,
   DelegationLaunchResult,
   DelegationProviderAdapter,
@@ -55,6 +56,14 @@ class RecordingAdapter implements DelegationProviderAdapter {
       workspaceReference: context.workspaceReference,
       startedAt: new Date().toISOString(),
     };
+  }
+}
+
+class AttachRecordingAdapter extends RecordingAdapter {
+  public lastAttachContext: DelegationAttachContext | null = null;
+
+  async attach(context: DelegationAttachContext): Promise<void> {
+    this.lastAttachContext = context;
   }
 }
 
@@ -194,88 +203,41 @@ test("stop records stopped even when no provider pid is tracked and is idempoten
   registry.close();
 });
 
-test("stop terminates the provider process and persists the stopped state", async () => {
+test("attach dispatches to a provider that supports live sessions", async () => {
   const { repoRoot, workspaceRoot, registryPath } = createGitRepo();
   const registry = new DelegationRegistry(registryPath);
-  const binDir = mkdtempSync(path.join(os.tmpdir(), "fabrica-stop-bin-"));
-  tempRoots.push(binDir);
-  const stopLogPath = path.join(binDir, "stopped.txt");
-  const providerScript = path.join(binDir, "opencode");
-
-  writeFileSync(
-    providerScript,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `trap 'printf stopped > "$STOP_LOG"' TERM`,
-      `printf started > "$START_LOG"`,
-      "while true; do sleep 1; done",
-    ].join("\n"),
-  );
-  chmodSync(providerScript, 0o755);
-
+  const adapter = new AttachRecordingAdapter("opencode", "fake-opencode");
   const service = new DelegationService(
     registry,
     new WorkspaceManager({ repoRoot, workspacesRoot: workspaceRoot }),
-    {
-      adapters: [
-        new LiveProcessAdapter(providerScript, {
-          START_LOG: path.join(binDir, "started.txt"),
-          STOP_LOG: stopLogPath,
-        }),
-      ],
-    },
+    { adapters: [adapter] },
   );
 
   const created = service.createDelegation({
-    summary: "stop me",
+    summary: "attach me",
     provider: "opencode",
   });
 
   const started = await service.startDelegation(created.delegationId);
-  assert.equal(started.record.status, "running");
+  const attached = await service.attachDelegation(created.delegationId);
 
-  const stopped = await service.stopDelegation(created.delegationId);
-  assert.equal(stopped.record.status, "stopped");
-  assert.equal(stopped.pid, started.launch.pid);
-
-  const deadline = Date.now() + 2000;
-  let exited = false;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(started.launch.pid, 0);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        (error as NodeJS.ErrnoException).code === "ESRCH"
-      ) {
-        exited = true;
-        break;
-      }
-
-      throw error;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-
-  assert.equal(exited, true);
+  assert.equal(attached.attached, true);
+  assert.equal(attached.pid, started.launch.pid);
+  assert.equal(attached.message, `Attached to delegation ${created.delegationId}`);
+  assert.equal(adapter.lastAttachContext?.delegationId, created.delegationId);
+  assert.equal(adapter.lastAttachContext?.workspaceReference, created.workspaceReference);
+  assert.equal(adapter.lastAttachContext?.pid, started.launch.pid);
 
   const shown = registry.show(created.delegationId);
   if (shown === null) {
-    throw new Error("expected delegation to exist after stop");
+    throw new Error("expected delegation to exist after attach");
   }
 
-  assert.equal(shown.status, "stopped");
+  assert.equal(shown.status, "running");
   assert.deepEqual(
     shown.events.map((event) => event.eventType),
-    ["created", "started", "preparing", "running", "stopped", "result"],
+    ["created", "started", "preparing", "running"],
   );
-  assert.equal(shown.status, "stopped");
-  assert.equal(shown.result?.exitCode, 143);
-  assert.equal(shown.result?.summary, "stop me");
-  assert.equal(shown.result?.artifacts.length, 0);
 
   registry.close();
 });

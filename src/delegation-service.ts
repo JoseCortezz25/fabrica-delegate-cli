@@ -25,6 +25,13 @@ export interface StartDelegationResult {
   launch: DelegationLaunchResult;
 }
 
+export interface AttachDelegationResult {
+  record: DelegationRecord;
+  pid: number | null;
+  attached: boolean;
+  message: string;
+}
+
 export interface StopDelegationResult {
   record: DelegationRecord;
   pid: number | null;
@@ -64,6 +71,44 @@ function findLaunchPid(record: DelegationRecord): number | null {
     if (typeof pid === "number" && Number.isFinite(pid)) {
       return pid;
     }
+  }
+
+  return null;
+}
+
+function getRunningContext(record: DelegationRecord): DelegationLaunchResult | null {
+  for (let index = record.events.length - 1; index >= 0; index -= 1) {
+    const event = record.events[index];
+    if (event?.eventType !== "running") {
+      continue;
+    }
+
+    const payload = event.payload;
+    const pid = payload?.pid;
+    const command = payload?.command;
+    const args = payload?.args;
+    const provider = payload?.provider;
+    const launchedAt = payload?.launchedAt;
+
+    if (
+      typeof pid !== "number" ||
+      !Number.isFinite(pid) ||
+      typeof command !== "string" ||
+      typeof provider !== "string" ||
+      !Array.isArray(args) ||
+      typeof launchedAt !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      pid,
+      command,
+      args: args.flatMap((value) => (typeof value === "string" ? [value] : [])),
+      provider,
+      workspaceReference: record.workspaceReference,
+      startedAt: launchedAt,
+    };
   }
 
   return null;
@@ -307,5 +352,53 @@ export class DelegationService {
       });
       throw error;
     }
+  }
+
+  async attachDelegation(delegationId: string): Promise<AttachDelegationResult> {
+    const record = this.registry.show(delegationId);
+
+    if (record === null) {
+      throw new Error(`Delegation not found: ${delegationId}`);
+    }
+
+    if (record.status !== "running") {
+      throw new Error(`Delegation ${delegationId} is not running`);
+    }
+
+    const adapter = this.providers.get(record.provider);
+    if (adapter === undefined) {
+      throw new Error(`No provider adapter registered for ${record.provider}`);
+    }
+
+    const pid = findLaunchPid(record);
+    const runningContext = getRunningContext(record);
+
+    if (adapter.attach === undefined) {
+      return {
+        record,
+        pid,
+        attached: false,
+        message: `Provider ${record.provider} does not support attach`,
+      };
+    }
+
+    if (runningContext === null) {
+      throw new Error(`Delegation ${delegationId} does not have a live session to attach to`);
+    }
+
+    await adapter.attach({
+      delegationId,
+      workspaceReference: runningContext.workspaceReference,
+      summary: record.summary,
+      metadata: record.metadata,
+      pid,
+    });
+
+    return {
+      record,
+      pid,
+      attached: true,
+      message: `Attached to delegation ${delegationId}`,
+    };
   }
 }
