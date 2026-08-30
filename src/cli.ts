@@ -5,6 +5,7 @@ import {
   type FanoutDelegationRequest,
 } from "./delegation-service.js";
 import { DelegationRegistry } from "./registry.js";
+import { printReplay } from "./replay.js";
 import { watchDelegation } from "./watch.js";
 import { WorkspaceManager } from "./workspace-manager.js";
 
@@ -307,6 +308,27 @@ export function buildCli(): Command {
     });
 
   program
+    .command("resume")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Resume a stopped or failed delegation in its existing workspace.")
+    .action(async (delegationId: string) => {
+      const { db, workspaceRoot } = program.opts<{ db?: string; workspaceRoot?: string }>();
+      const { registry, service } = openService(db, workspaceRoot);
+
+      try {
+        const resumed = await service.resumeDelegation(delegationId);
+        console.log(`Resumed delegation ${resumed.record.delegationId}`);
+        console.log(`  provider: ${resumed.record.provider}`);
+        console.log(`  workspace: ${resumed.record.workspaceReference}`);
+        console.log(`  status: ${resumed.record.status}`);
+        console.log(`  pid: ${resumed.launch.pid}`);
+        console.log(`  command: ${resumed.launch.command} ${resumed.launch.args.join(" ")}`.trim());
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
     .command("stop")
     .argument("<delegation-id>", "delegation identifier")
     .description("Stop a running delegation and persist the stopped state.")
@@ -384,6 +406,19 @@ export function buildCli(): Command {
       const registry = openRegistry(program.opts<{ db?: string }>().db);
       try {
         printResult(registry, delegationId);
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
+    .command("replay")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Reconstruct the persisted event stream for a delegation.")
+    .action((delegationId: string) => {
+      const registry = openRegistry(program.opts<{ db?: string }>().db);
+      try {
+        printReplay(registry, delegationId);
       } finally {
         registry.close();
       }
