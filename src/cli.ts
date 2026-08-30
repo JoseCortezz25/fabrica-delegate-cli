@@ -237,6 +237,31 @@ export function buildCli(): Command {
     });
 
   program
+    .command("attach")
+    .argument("<delegation-id>", "delegation identifier")
+    .description("Attach to a running delegation when the provider supports live sessions.")
+    .action(async (delegationId: string) => {
+      const { db } = program.opts<{ db?: string }>();
+      const { registry, service } = openService(db);
+
+      try {
+        const attached = await service.attachDelegation(delegationId);
+        if (attached.attached) {
+          console.log(attached.message);
+          console.log(`  provider: ${attached.record.provider}`);
+          console.log(`  pid: ${attached.pid ?? "unknown"}`);
+          return;
+        }
+
+        console.log(attached.message);
+        console.log(`  delegation: ${attached.record.delegationId}`);
+        console.log(`  status: ${attached.record.status}`);
+      } finally {
+        registry.close();
+      }
+    });
+
+  program
     .command("list")
     .description("List delegations stored in SQLite.")
     .action(() => {

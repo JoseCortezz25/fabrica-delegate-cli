@@ -5,6 +5,10 @@ export interface DelegationLaunchContext {
   metadata: Record<string, unknown>;
 }
 
+export interface DelegationAttachContext extends DelegationLaunchContext {
+  pid: number | null;
+}
+
 export interface DelegationLaunchResult {
   provider: string;
   command: string;
@@ -17,4 +21,5 @@ export interface DelegationLaunchResult {
 export interface DelegationProviderAdapter {
   readonly provider: string;
   start(context: DelegationLaunchContext): Promise<DelegationLaunchResult>;
+  attach?(context: DelegationAttachContext): Promise<void>;
 }
